@@ -5,7 +5,7 @@
     <body>
         <h1 align=center>Solid Triangle Example</h1>
         <script type="module">
-            const loc_position = 0;
+            const loc_position = 3;
             async function main() {
                 const adapter = await navigator.gpu?.requestAdapter();
                 const device = await adapter?.requestDevice();
@@ -37,7 +37,7 @@
                     }]
                 });
                 passRender.setPipeline(pipeline);
-                passRender.setVertexBuffer(loc_position, vertexBuffer);
+                passRender.setVertexBuffer(0, vertexBuffer);
                 passRender.draw(countVertices);
                 passRender.end();
                 const commandBuffer = encoder.finish();
