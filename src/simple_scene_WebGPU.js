@@ -13,9 +13,6 @@ const id_binding_matrices = 4;
 const id_binding_light = 3;
 const id_binding_material = 7;
 
-//function toRadian(deg) { return deg*Math.PI / 180.0; }
-
-
 async function main() {
     const adapter = await navigator.gpu?.requestAdapter();
     const device = await adapter?.requestDevice();
@@ -29,9 +26,6 @@ async function main() {
         device,
         format: preferredFormat,
     });
-
-//    const {buffer:vertexBuffer, layout:layoutVertexBuffer, count:countVertices}
-//        = initVertexBuffer(device);
 
     const cube = initCube(device, locations);
     const plane = initPlane(device, locations);
@@ -150,14 +144,14 @@ async function main() {
 
         // While we don't need to upload the uniforms at every frame, we do it
         // for later use...
-       device.queue.writeBuffer(
+        device.queue.writeBuffer(
             uniformBuffer_light,
             0,
             light.buffer,
             light.byteOffset,
             light.byteLength
         );
-       const canvasTexture = context.getCurrentTexture();
+        const canvasTexture = context.getCurrentTexture();
         renderPassDescriptor.colorAttachments[0].view = canvasTexture.createView();
 
         if(!depthTexture ||
@@ -174,17 +168,14 @@ async function main() {
         }
         renderPassDescriptor.depthStencilAttachment.view = depthTexture.createView();
         
-        let encoder;
-        let passRender;
 
 
-        encoder = device.createCommandEncoder();
+        let encoder = device.createCommandEncoder();
+        let passRender = encoder.beginRenderPass(renderPassDescriptor);
 
-
-        passRender = encoder.beginRenderPass(renderPassDescriptor);
         passRender.setPipeline(pipeline);
 
-        // render the plane
+        // start of rendering the plane
         matrices.set(MVP_plane, 0);
         matrices.set(N_plane, 16);
         device.queue.writeBuffer(uniformBuffer_matrices_plane, 0, matrices);
@@ -198,8 +189,9 @@ async function main() {
         passRender.setIndexBuffer(plane.buffers.index, 'uint32');
         passRender.setBindGroup(id_group, bindGroup_plane);
         passRender.drawIndexed(plane.count);
+        // end of rendering the plane
 
-        // render the cube
+        // start of rendering the plane
         matrices.set(MVP_cube, 0);
         matrices.set(N_cube, 16);
         device.queue.writeBuffer(uniformBuffer_matrices_cube, 0, matrices);
@@ -213,6 +205,7 @@ async function main() {
         passRender.setIndexBuffer(cube.buffers.index, 'uint32');
         passRender.setBindGroup(id_group, bindGroup_cube);
         passRender.drawIndexed(cube.count);
+        // end of rendering the plane
 
 
         passRender.end();
@@ -301,6 +294,35 @@ function initPipeline(device, canvasFormat, shaderModule, entry_vert, entry_frag
     return pipeline;
 }
 
+function createBuffers(device, arrays, names)
+{
+    var buffers = {position:null, normal:null, indices: null};
+
+    buffers.position = device.createBuffer({
+        label:names.position,
+        size: arrays.position.byteLength,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+    });
+
+    buffers.normal = device.createBuffer({
+        label:names.normal,
+        size: arrays.normal.byteLength,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+    });
+
+    buffers.index = device.createBuffer({
+        label:names.index,
+        size: arrays.index.byteLength,
+        usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
+    });
+
+    device.queue.writeBuffer(buffers.position, 0, arrays.position);
+    device.queue.writeBuffer(buffers.normal, 0, arrays.normal);
+    device.queue.writeBuffer(buffers.index, 0, arrays.index);
+
+    return buffers;
+
+}
 
 function initCube(device, locations) {
   // Create a cube
@@ -338,30 +360,9 @@ function initCube(device, locations) {
       16,17,18,  16,18,19,    // down
       20,21,22,  20,22,23     // back
     ]);
+    const names = {position:"cube positions", normal:"cube normals", index:"cube indices"};
 
-    var buffers = {position:null, normal:null, indices: null};
-
-    buffers.position = device.createBuffer({
-        label:"cube vertices",
-        size: position.byteLength,
-        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-    });
-
-    buffers.normal = device.createBuffer({
-        label:"cube nomals",
-        size: normal.byteLength,
-        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-    });
-
-    buffers.index = device.createBuffer({
-        label:"cube indices",
-        size: index.byteLength,
-        usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
-    });
-
-    device.queue.writeBuffer(buffers.position, 0, position);
-    device.queue.writeBuffer(buffers.normal, 0, normal);
-    device.queue.writeBuffer(buffers.index, 0, index);
+    const buffers = createBuffers(device, {position, normal, index}, names);
 
     return {buffers:buffers, count:index.length};
 }
@@ -380,29 +381,9 @@ function initPlane(device, locations) {
        0, 1, 2,   0, 2, 3,    // front
     ]);
 
-    var buffers = {vertices:null, normals:null, indices: null};
+    const names = {position:"plane positions", normal:"plane normals", index:"plane indices"};
 
-    buffers.position = device.createBuffer({
-        label:"plane vertices",
-        size: position.byteLength,
-        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-    });
-
-    buffers.normal = device.createBuffer({
-        label:"plane nomals",
-        size: normal.byteLength,
-        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-    });
-
-    buffers.index = device.createBuffer({
-        label:"plane indices",
-        size: index.byteLength,
-        usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
-    });
-
-    device.queue.writeBuffer(buffers.position, 0, position);
-    device.queue.writeBuffer(buffers.normal, 0, normal);
-    device.queue.writeBuffer(buffers.index, 0, index);
+    const buffers = createBuffers(device, {position, normal, index}, names);
 
     return {buffers:buffers, count:index.length};
 }
