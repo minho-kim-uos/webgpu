@@ -27,8 +27,9 @@ async function main() {
         format: preferredFormat,
     });
 
-    const cube = initCube(device, locations);
-    const plane = initPlane(device, locations);
+    const szBufMatrices = 4*16*2; // 2 x mat4x4
+
+    const {module:shaderModule, entry_vert, entry_frag} = initShaderModule(device);
 
     let layoutVertexBuffer = [
         {
@@ -49,80 +50,14 @@ async function main() {
         }
     ];
 
-
-    const {module:shaderModule, entry_vert, entry_frag} = initShaderModule(device);
-
     const pipeline = initPipeline(device, preferredFormat, shaderModule, entry_vert, entry_frag, layoutVertexBuffer);
 
-    const szBufMatrices = 4*16*2; // 2 x mat4x4
-    const szBufLight = 4*4*3; // 3 x vec4f (including paddings)
-    const szBufMaterial = 4*4*2; // 2 x vec4f (including paddings)
-
-    const uniformBuffer_matrices_cube = device.createBuffer({
-        size: szBufMatrices,
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-    const uniformBuffer_matrices_plane = device.createBuffer({
-        size: szBufMatrices,
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-    const uniformBuffer_light = device.createBuffer({
-        size: szBufLight,
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-    const uniformBuffer_material_cube = device.createBuffer({
-        size: szBufMaterial,
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-    const uniformBuffer_material_plane = device.createBuffer({
-        size: szBufMaterial,
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-
-    const bindGroup_cube = device.createBindGroup({
-        label:"bind group for the cube",
-        layout: pipeline.getBindGroupLayout(id_group),
-        entries:[
-            { binding:id_binding_matrices, resource:{buffer:uniformBuffer_matrices_cube} },
-            { binding:id_binding_light, resource:{buffer:uniformBuffer_light} },
-            { binding:id_binding_material, resource:{buffer:uniformBuffer_material_cube} },
-        ],
-    });
-    const bindGroup_plane = device.createBindGroup({
-        label:"bind group for the plane",
-        layout: pipeline.getBindGroupLayout(id_group),
-        entries:[
-            { binding:id_binding_matrices, resource:{buffer:uniformBuffer_matrices_plane} },
-            { binding:id_binding_light, resource:{buffer:uniformBuffer_light} },
-            { binding:id_binding_material, resource:{buffer:uniformBuffer_material_plane} },
-        ],
-    });
+    const shared = initShared(device);
+    const cube = initCube(device, pipeline, locations, shared.VP, shared.V, shared.uniformBuffer_light);
+    const plane = initPlane(device, pipeline, locations, shared.VP, shared.V, shared.uniformBuffer_light);
 
 
     const matrices = new Float32Array(szBufMatrices/4);
-    const light = new Float32Array(szBufLight/4);
-    const material = new Float32Array(szBufMaterial/4);
-
-    light.set([4, 4, 1, 1], 0); // position
-    light.set([.3, .3, .3], 4); // ambient
-    light.set([1, 1, 1], 8);    // diffuse
-
-    let P = mat4.perspective(utils.degToRad(50), 1, 1, 100);
-    let V = mat4.rotation([1,0,0], utils.degToRad(10));
-    V = mat4.rotate(V, [0,1,0], utils.degToRad(-40));
-    V = mat4.translate(V, [-3, -1.5, -4]);
-
-    let VP = mat4.multiply(P, V);
-
-    let M_plane = mat4.scaling([5, 5, 5]);
-    M_plane = mat4.rotate(M_plane, [1,0,0], utils.degToRad(-90));
-    let MVP_plane = mat4.multiply(VP, M_plane);
-    let N_plane = mat4.transpose(mat4.invert(mat4.multiply(V, M_plane)));
-
-    let M_cube = mat4.translation([0, 0.5, 0]);
-    let MVP_cube = mat4.multiply(VP, M_cube);
-    let N_cube = mat4.transpose(mat4.invert(mat4.multiply(V, M_cube)));
-
     const renderPassDescriptor = {
        colorAttachments: [{
               // view: <- to be filled out when we render
@@ -142,15 +77,6 @@ async function main() {
 
     function tick() {
 
-        // While we don't need to upload the uniforms at every frame, we do it
-        // for later use...
-        device.queue.writeBuffer(
-            uniformBuffer_light,
-            0,
-            light.buffer,
-            light.byteOffset,
-            light.byteLength
-        );
         const canvasTexture = context.getCurrentTexture();
         renderPassDescriptor.colorAttachments[0].view = canvasTexture.createView();
 
@@ -167,55 +93,38 @@ async function main() {
             });
         }
         renderPassDescriptor.depthStencilAttachment.view = depthTexture.createView();
-        
-
 
         let encoder = device.createCommandEncoder();
         let passRender = encoder.beginRenderPass(renderPassDescriptor);
 
         passRender.setPipeline(pipeline);
 
-        // start of rendering the plane
-        matrices.set(MVP_plane, 0);
-        matrices.set(N_plane, 16);
-        device.queue.writeBuffer(uniformBuffer_matrices_plane, 0, matrices);
+        render_object(device, passRender, matrices, plane);
 
-        material.set([.5, 1, 1], 0); // ambient
-        material.set([.5, 1, 1], 4); // diffuse
-        device.queue.writeBuffer(uniformBuffer_material_plane, 0, material);
- 
-        passRender.setVertexBuffer(0, plane.buffers.position);
-        passRender.setVertexBuffer(1, plane.buffers.normal);
-        passRender.setIndexBuffer(plane.buffers.index, 'uint32');
-        passRender.setBindGroup(id_group, bindGroup_plane);
-        passRender.drawIndexed(plane.count);
-        // end of rendering the plane
-
-        // start of rendering the plane
-        matrices.set(MVP_cube, 0);
-        matrices.set(N_cube, 16);
-        device.queue.writeBuffer(uniformBuffer_matrices_cube, 0, matrices);
-
-        material.set([1, .5, .5], 0); // ambient
-        material.set([1, .5, .5], 4); // diffuse
-        device.queue.writeBuffer(uniformBuffer_material_cube, 0, material);
-
-        passRender.setVertexBuffer(0, cube.buffers.position);
-        passRender.setVertexBuffer(1, cube.buffers.normal);
-        passRender.setIndexBuffer(cube.buffers.index, 'uint32');
-        passRender.setBindGroup(id_group, bindGroup_cube);
-        passRender.drawIndexed(cube.count);
-        // end of rendering the plane
-
+        render_object(device, passRender, matrices, cube);
 
         passRender.end();
-        const commandBuffer = encoder.finish();
-        device.queue.submit([commandBuffer]);
+
+        device.queue.submit([encoder.finish()]);
 
         requestAnimationFrame(tick);
     }
 
     requestAnimationFrame(tick);
+}
+
+function render_object(device, passRender, matrices, obj)
+{
+    matrices.set(obj.MVP, 0);
+    matrices.set(obj.N, 16);
+    device.queue.writeBuffer(obj.uniformBuffer_matrices, 0, matrices);
+    
+    passRender.setVertexBuffer(0, obj.buffers.position);
+    passRender.setVertexBuffer(1, obj.buffers.normal);
+    passRender.setIndexBuffer(obj.buffers.index, 'uint32');
+    passRender.setBindGroup(id_group, obj.bindGroup);
+    passRender.drawIndexed(obj.count);
+ 
 }
 
 function initShaderModule(device) {
@@ -324,7 +233,7 @@ function createBuffers(device, arrays, names)
 
 }
 
-function initCube(device, locations) {
+function initCube(device, pipeline, locations, VP, V, uniformBuffer_light) {
   // Create a cube
   //    v6----- v5
   //   /|      /|
@@ -362,12 +271,46 @@ function initCube(device, locations) {
     ]);
     const names = {position:"cube positions", normal:"cube normals", index:"cube indices"};
 
+    // vertex & index buffers
     const buffers = createBuffers(device, {position, normal, index}, names);
 
-    return {buffers:buffers, count:index.length};
+    // uniform "matrices"
+    const szBufMatrices = 4*16*2; // 2 x mat4x4
+    const uniformBuffer_matrices = device.createBuffer({
+        size: szBufMatrices,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    let M = mat4.translation([0, 0.5, 0]);
+    let MVP = mat4.multiply(VP, M);
+    let N = mat4.transpose(mat4.invert(mat4.multiply(V, M)));
+
+
+    // uniform "material"
+    const szBufMaterial = 4*4*2; // 2 x vec4f (including paddings)
+    const uniformBuffer_material = device.createBuffer({
+        size: szBufMaterial,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    const material = new Float32Array(szBufMaterial/4);
+    material.set([1, .5, .5], 0); // ambient
+    material.set([1, .5, .5], 4); // diffuse
+    device.queue.writeBuffer(uniformBuffer_material, 0, material);
+
+    // bindGroup
+    const bindGroup = device.createBindGroup({
+        label:"bind group for the cube",
+        layout: pipeline.getBindGroupLayout(id_group),
+        entries:[
+            { binding:id_binding_matrices, resource:{buffer:uniformBuffer_matrices} },
+            { binding:id_binding_light, resource:{buffer:uniformBuffer_light} },
+            { binding:id_binding_material, resource:{buffer:uniformBuffer_material} },
+        ],
+    });
+
+    return {buffers:buffers, uniformBuffer_matrices, uniformBuffer_material, bindGroup, MVP, N, count:index.length};
 }
 
-function initPlane(device, locations) {
+function initPlane(device, pipeline, locations, VP, V, uniformBuffer_light) {
 
     const position = new Float32Array([   // Vertex coordinates
        .5, .5, 0,   -.5, .5, 0,  -.5, -.5, 0,  .5, -.5, 0  // v0-v5-v6-v1 up
@@ -383,12 +326,71 @@ function initPlane(device, locations) {
 
     const names = {position:"plane positions", normal:"plane normals", index:"plane indices"};
 
+    // vertex & index buffers
     const buffers = createBuffers(device, {position, normal, index}, names);
 
-    return {buffers:buffers, count:index.length};
+
+    // uniform "matrices"
+    const szBufMatrices = 4*16*2; // 2 x mat4x4
+    const uniformBuffer_matrices = device.createBuffer({
+        size: szBufMatrices,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    let M = mat4.scaling([5, 5, 5]);
+    M = mat4.rotate(M, [1,0,0], utils.degToRad(-90));
+    let MVP = mat4.multiply(VP, M);
+    let N = mat4.transpose(mat4.invert(mat4.multiply(V, M)));
+
+    // uniform "material"
+    const szBufMaterial = 4*4*2; // 2 x vec4f (including paddings)
+    const uniformBuffer_material = device.createBuffer({
+        size: szBufMaterial,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    const material = new Float32Array(szBufMaterial/4);
+    material.set([.5, 1, 1], 0); // ambient
+    material.set([.5, 1, 1], 4); // diffuse
+    device.queue.writeBuffer(uniformBuffer_material, 0, material);
+
+    // bindGroup
+    const bindGroup = device.createBindGroup({
+        label:"bind group for the plane",
+        layout: pipeline.getBindGroupLayout(id_group),
+        entries:[
+            { binding:id_binding_matrices, resource:{buffer:uniformBuffer_matrices} },
+            { binding:id_binding_light, resource:{buffer:uniformBuffer_light} },
+            { binding:id_binding_material, resource:{buffer:uniformBuffer_material} },
+        ],
+    });
+
+    return {buffers:buffers, uniformBuffer_matrices, uniformBuffer_material, bindGroup, MVP, N, count:index.length};
 }
 
+function initShared(device)
+{
+    let P = mat4.perspective(utils.degToRad(50), 1, 1, 100);
+    let V = mat4.rotation([1,0,0], utils.degToRad(10));
+    V = mat4.rotate(V, [0,1,0], utils.degToRad(-40));
+    V = mat4.translate(V, [-3, -1.5, -4]);
 
+    let VP = mat4.multiply(P, V);
+
+    const szBufLight = 4*4*3; // 3 x vec4f (including paddings)
+    const uniformBuffer_light = device.createBuffer({
+        size: szBufLight,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+
+    const light = new Float32Array(szBufLight/4);
+
+    light.set([4, 4, 1, 1], 0); // position
+    light.set([.3, .3, .3], 4); // ambient
+    light.set([1, 1, 1], 8);    // diffuse
+    // upload only once since light info is static.
+    device.queue.writeBuffer(uniformBuffer_light, 0, light);    
+
+    return {uniformBuffer_light, V, VP};
+}
 
 main();
 
