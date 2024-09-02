@@ -18,7 +18,7 @@ function main() {
 
     // Set up the light
     const light = new THREE.PointLight({color:0xFFFFFF});
-    light.position.set(5, 5, 1);
+    light.position.set(4, 4, 1);
     light.distance = 0;
 
     // Set up the camera
