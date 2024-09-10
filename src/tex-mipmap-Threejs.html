@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Mipmap (Three.js)</title>
+  </head>
+
+  <body>
+  	<h1 align=center>Mipmap (Three.js)</h1>
+    <canvas id="webgl" width="1024" height="1024">
+    Please use a browser that supports "canvas"
+    </canvas>
+	<table>
+		<tr>
+			<td>texture:</td>
+			<td><tt>
+					<select id="texture">
+						<option value="checkerboard">checkerboard</option>
+						<option value="separate_colors">separate colors</option>
+					</select>
+				</tt>
+			</td>
+		</tr>
+		<tr>
+			<td><tt>Texture.magFilter:</tt></td>
+			<td><tt>
+					<select id="mag-filter">
+						<option id="mag-LINEAR">LinearFilter</option>
+						<option id="mag-NEAREST" selected>NearestFilter</option>
+					</select>
+				</tt>
+			</td>
+		</tr>
+		<tr>
+			<td><tt>Texture.minFilter:</tt></td>
+			<td><tt>
+					<select id="min-filter">
+						<option id="min-LINEAR">LinearFilter</option>
+						<option id="min-NEAREST" selected>NearestFilter</option>
+						<option id="min-NEAREST_MIPMAP_NEAREST">NearestMipmapNearestFilter</option>
+						<option id="min-LINEAR_MIPMAP_NEAREST">LinearMipmapNearestFilter</option>
+						<option id="min-NEAREST_MIPMAP_LINEAR">NearestMipmapLinearFilter</option>
+						<option id="min-LINEAR_MIPMAP_LINEAR">LinearMipmapLinearFilter</option>
+					</select>
+				</tt>
+			</td>
+		</tr>
+		<tr>
+			<td>speed</td>
+			<td>
+				<input type="range" id="speed", min=0 max=200 value=100>
+			</td>
+		</tr>
+
+	</table>
+
+    <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdnjs.cloudflare.com/ajax/libs/three.js/0.168.0/three.module.js"
+      }
+    }
+    </script>
+    <script type="module" src="tex-mipmap-Threejs.js"></script>
+  </body>
+</html>
