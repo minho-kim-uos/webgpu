@@ -25,17 +25,26 @@ function main()
     const textures = 
     {
         "checkerboard":generate_tex_checkerboard(32),
-//        "separate_colors":generate_tex_mipmap(gl, 6, [[255,0,0], [0,255,0], [0,0,255], [255,255,0], [255,0,255], [0,255,255]])
+        "separate_colors":generate_tex_mipmap(6, ["#ff0000", "#00ff00", "#0000ff", "#ffff00", "#ff00ff", "#00ffff"]),
     };
 
 
+    let plane;
+
+
     function on_change_filter(event) {
-        const tex = textures["checkerboard"];
+        const tex = textures[document.querySelector("#texture").value];
+
+        plane.material.map = tex;
         tex.minFilter = document.querySelector("#min-filter").value;
         tex.magFilter = document.querySelector("#mag-filter").value;
         tex.needsUpdate = true;
+
+
+        console.log(document.querySelector("#texture").value);
     }
 
+    document.querySelector("#texture").addEventListener("change", on_change_filter);
     document.querySelector("#min-filter").addEventListener("change", on_change_filter);
     document.querySelector("#mag-filter").addEventListener("change", on_change_filter);
 
@@ -54,9 +63,9 @@ function main()
         geometry.setIndex(indices);
 
 
-        const material = new THREE.MeshBasicMaterial({map:textures["checkerboard"]});
+        const material = new THREE.MeshBasicMaterial({map:textures[document.querySelector("#texture").value]});
         const geom_Threejs = new THREE.PlaneGeometry(1,1);
-        const plane = new THREE.Mesh(geometry, material);
+        plane = new THREE.Mesh(geometry, material);
         plane.scale.set(20,20,20);
         scene.add(plane);
     }
@@ -119,28 +128,39 @@ function generate_tex_checkerboard(N)
     texture.wrapT = THREE.RepeatWrapping;
     texture.generateMipmaps = true;
     
+    console.log(texture);
     return texture;
 }
 
-function generate_tex_mipmap(gl, levels, colors, max_level)
+function generate_tex_mipmap(levels, colors, max_level)
 {
-    const tex = gl.createTexture(); 
-    gl.bindTexture(gl.TEXTURE_2D, tex);
-    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    // https://sbcode.net/threejs/custom-mipmaps/
+
+    const blankCanvas = document.createElement('canvas');
+    blankCanvas.width = Math.pow(2,levels-1);
+    blankCanvas.height = blankCanvas.width;
+
+    const texture = new THREE.CanvasTexture(blankCanvas);
+    texture.generateMipmaps = false;
+
     for(let level = 0 ; level < levels ; level++)
     {
         let N = Math.pow(2,levels-level-1);
-        let img = new Uint8Array(N*N*3);
-        for(let i=0 ; i<N ; i++)
-        {
-            for(let j=0 ; j<N ; j++)
-            {
-                for(let k=0 ; k<3 ; k++) img[3*(i*N + j) + k] = colors[level][k];
-            }
-        }
-        gl.texImage2D(gl.TEXTURE_2D, level, gl.RGB, N, N, 0, gl.RGB, gl.UNSIGNED_BYTE, img);
+        const imageCanvas = document.createElement('canvas');
+        const context = imageCanvas.getContext('2d');
+        imageCanvas.width = N;
+        imageCanvas.height = N;
+        context.fillStyle = colors[level];
+        context.fillRect(0,0,N,N);
+        texture.mipmaps.push(imageCanvas);
     }
-    return tex;
+    texture.needsUpdate = true;
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+
+    console.log(texture);
+
+    return texture;
 }
 
 main();
