@@ -1,9 +1,9 @@
 <html>
     <head>
-        <title>Solid Triangle Example</title>
+        <title>Two Pipelines</title>
     </head>
     <body>
-        <h1 align=center>Solid Triangle Example</h1>
+        <h1 align=center>Two Pipelines</h1>
         <script type="module">
             const loc_position = 3;
             async function main() {
@@ -21,8 +21,14 @@
                 });
 
                 const vertices = new Float32Array([
-                     0.0, 0.8,
+                    -0.5, 0.8,
                     -0.8,-0.8,
+                    -0.2,-0.8,
+                     0.5, 0.8,
+                     0.2,-0.8,
+                     0.8,-0.8,
+                     0.5, 0.8,
+                     0.2,-0.8,
                      0.8,-0.8,
                 ]);
 
@@ -34,48 +40,62 @@
 
                 device.queue.writeBuffer(vertexBuffer, 0, vertices);
 
-                const layoutVertexBuffer = {
-                    arrayStride: 8,
-                    attributes: [{
-                        format: "float32x2",
-                        offset: 0,
-                        shaderLocation: loc_position,
-                    }],
-                };
-
-                const src_shaders = `
-                    @vertex fn main_vert(@location(${loc_position}) position: vec2f)
-                        -> @builtin(position) vec4f {
-                        return vec4f(position, 0, 1);
-                    }
-                    @fragment fn main_frag() -> @location(0) vec4f {
-                        return vec4f(1, 0, 0, 1);
-                    }
-                `;
-                const shaderModule = device.createShaderModule({
-                    label: "solid triangle shader",
-                    code:src_shaders,
-                });
-
-                const pipeline = device.createRenderPipeline({
-                    label: "solid triangle pipeline",
-                    layout: "auto",
-                    vertex: {
-                        module:shaderModule,
-                        entryPoint: "main_vert",
-                        buffers: [{ arrayStride: 8,
+                const vertexBufferLayout = {
+                                    arrayStride: 4*2,
                                     attributes: [{
                                         format: "float32x2",
                                         offset: 0,
                                         shaderLocation: loc_position,
-                                    }],
- 
+                                    }]};
+                const src_shader = `
+                    @vertex fn main_vert(@location(${loc_position}) position: vec2f)
+                        -> @builtin(position) vec4f {
+                        return vec4f(position, 0, 1);
+                    }
+
+                    @fragment fn main_frag_red() -> @location(0) vec4f {
+                        return vec4f(1, 0, 0, 1);
+                    }
+
+                    @fragment fn main_frag_blue() -> @location(0) vec4f {
+                        return vec4f(0, 0, 1, 1);
+                    }
+                `;
+                const shaderModule = device.createShaderModule({
+                    label: "solid triangle shaders",
+                    code:src_shader,
+                });
+
+                const pipeline_red = device.createRenderPipeline({
+                    label: "red triangle pipeline",
+                    layout: "auto",
+                    vertex: {
+                        module:shaderModule,
+                        entryPoint: "main_vert",
+                        buffers: [vertexBufferLayout],
                     },
                     fragment: {
                         module:shaderModule,
-                        entryPoint: "main_frag",
+                        entryPoint: "main_frag_red",
                         targets: [{
-                            format: canvasFormat
+                            format: preferredFormat
+                        }]
+                    },
+                });
+
+                const pipeline_blue = device.createRenderPipeline({
+                    label: "blue triangle pipeline",
+                    layout: "auto",
+                    vertex: {
+                        module:shaderModule,
+                        entryPoint: "main_vert",
+                        buffers: [vertexBufferLayout],
+                    },
+                    fragment: {
+                        module:shaderModule,
+                        entryPoint: "main_frag_blue",
+                        targets: [{
+                            format: preferredFormat
                         }]
                     },
                 });
@@ -85,24 +105,24 @@
                     colorAttachments: [{
                         view: context.getCurrentTexture().createView(),
                         loadOp: "clear",
-                        clearValue: {r:0, g:0, b:0.4, a:1},
+                        clearValue: {r:.5, g:.5, b:.5, a:1},
                         storeOp: "store",
                     }]
                 });
-                passRender.setPipeline(pipeline);
-                passRender.setVertexBuffer(0, vertexBuffer);
-                passRender.draw(countVertices);
+                passRender.setPipeline(pipeline_red);
+                passRender.setVertexBuffer(0, vertexBuffer, 0);
+                passRender.draw(3);
+
+                passRender.setPipeline(pipeline_blue);
+                passRender.setVertexBuffer(0, vertexBuffer, 4*2*3);
+                passRender.draw(3);
+
                 passRender.end();
                 const commandBuffer = encoder.finish();
                 device.queue.submit([commandBuffer]);
             }
 
-
-
-            function initPipeline(device, canvasFormat, shaderModule, entry_vert, entry_frag, layoutVertexBuffer) {
-               return pipeline;
-            }
-    
+   
             main();
         </script>
 

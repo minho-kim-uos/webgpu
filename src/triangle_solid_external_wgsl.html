@@ -32,10 +32,28 @@
                 src_shader = await response.text();
                 src_shader = src_shader.replaceAll("${loc_position}", loc_position.toString());
 
-                const {module:shaderModule, entry_vert, entry_frag} = initShaderModule(device, src_shader);
+                const shaderModule = device.createShaderModule({
+                    label: "solid triangle shader",
+                    code:src_shader,
+                });
 
-                const pipeline = initPipeline(device, preferredFormat, shaderModule, entry_vert, entry_frag, layoutVertexBuffer);
-
+                const pipeline = device.createRenderPipeline({
+                    label: "solid triangle pipeline",
+                    layout: "auto",
+                    vertex: {
+                        module:shaderModule,
+                        entryPoint: "main_vert",
+                        buffers: [layoutVertexBuffer],
+                    },
+                    fragment: {
+                        module:shaderModule,
+                        entryPoint: "main_frag",
+                        targets: [{
+                            format: preferredFormat
+                        }]
+                    },
+                });
+ 
                 const encoder = device.createCommandEncoder();
                 const passRender = encoder.beginRenderPass({
                     colorAttachments: [{
@@ -77,34 +95,6 @@
                 return {buffer:buffer, layout:layoutVertexBuffer, count:vertices.length/2};
             }
 
-            function initShaderModule(device, src_shader) {
-                const shaderModule = device.createShaderModule({
-                    label: "solid triangle shader",
-                    code:src_shader,
-                });
-                return {module:shaderModule, entry_vert:"main_vert", entry_frag:"main_frag"};
-            }
-
-            function initPipeline(device, canvasFormat, shaderModule, entry_vert, entry_frag, layoutVertexBuffer) {
-                const pipeline = device.createRenderPipeline({
-                    label: "solid triangle pipeline",
-                    layout: "auto",
-                    vertex: {
-                        module:shaderModule,
-                        entryPoint: entry_vert,
-                        buffers: [layoutVertexBuffer],
-                    },
-                    fragment: {
-                        module:shaderModule,
-                        entryPoint: entry_frag,
-                        targets: [{
-                            format: canvasFormat
-                        }]
-                    },
-                });
-                return pipeline;
-            }
-    
             main();
         </script>
 
