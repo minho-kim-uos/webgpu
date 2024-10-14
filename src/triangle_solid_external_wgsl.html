@@ -1,0 +1,116 @@
+<html>
+    <head>
+        <title>Solid Triangle Example (with External wgsl File)</title>
+    </head>
+    <body>
+        <h1 align=center>Solid Triangle Example (with External <tt>wgsl</tt> File)</h1>
+        <script type="module">
+            const loc_position = 3;
+            async function main() {
+                const adapter = await navigator.gpu?.requestAdapter();
+                const device = await adapter?.requestDevice();
+                if(!device) {
+                    throw Error("WebGPU not supported.");
+                }
+                const canvas = document.querySelector("#webgpu");
+                const context = canvas.getContext("webgpu");
+                const preferredFormat = navigator.gpu.getPreferredCanvasFormat();
+                context.configure({
+                    device,
+                    format: preferredFormat,
+                });
+
+                const {buffer:vertexBuffer, layout:layoutVertexBuffer, count:countVertices}
+                    = initVertexBuffer(device);
+
+                let src_shader;
+                let response;
+                response = await fetch("./triangle_solid.wgsl");
+                if(!response.ok) {
+                    throw new Error(`Error while fetching ${response.url}. (Response status: ${response.status})`);
+                }
+                src_shader = await response.text();
+                src_shader = src_shader.replaceAll("${loc_position}", loc_position.toString());
+
+                const {module:shaderModule, entry_vert, entry_frag} = initShaderModule(device, src_shader);
+
+                const pipeline = initPipeline(device, preferredFormat, shaderModule, entry_vert, entry_frag, layoutVertexBuffer);
+
+                const encoder = device.createCommandEncoder();
+                const passRender = encoder.beginRenderPass({
+                    colorAttachments: [{
+                        view: context.getCurrentTexture().createView(),
+                        loadOp: "clear",
+                        clearValue: {r:0, g:0, b:0.4, a:1},
+                        storeOp: "store",
+                    }]
+                });
+                passRender.setPipeline(pipeline);
+                passRender.setVertexBuffer(0, vertexBuffer);
+                passRender.draw(countVertices);
+                passRender.end();
+                const commandBuffer = encoder.finish();
+                device.queue.submit([commandBuffer]);
+            }
+
+            function initVertexBuffer(device) {
+                const vertices = new Float32Array([
+                     0.0, 0.8,
+                    -0.8,-0.8,
+                     0.8,-0.8,
+                ]);
+                const buffer = device.createBuffer({
+                    label:"triangle vertices",
+                    size: vertices.byteLength,
+                    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+                });
+                device.queue.writeBuffer(buffer, 0, vertices);
+
+                const layoutVertexBuffer = {
+                    arrayStride: 8,
+                    attributes: [{
+                        format: "float32x2",
+                        offset: 0,
+                        shaderLocation: loc_position,
+                    }],
+                };
+                return {buffer:buffer, layout:layoutVertexBuffer, count:vertices.length/2};
+            }
+
+            function initShaderModule(device, src_shader) {
+                const shaderModule = device.createShaderModule({
+                    label: "solid triangle shader",
+                    code:src_shader,
+                });
+                return {module:shaderModule, entry_vert:"main_vert", entry_frag:"main_frag"};
+            }
+
+            function initPipeline(device, canvasFormat, shaderModule, entry_vert, entry_frag, layoutVertexBuffer) {
+                const pipeline = device.createRenderPipeline({
+                    label: "solid triangle pipeline",
+                    layout: "auto",
+                    vertex: {
+                        module:shaderModule,
+                        entryPoint: entry_vert,
+                        buffers: [layoutVertexBuffer],
+                    },
+                    fragment: {
+                        module:shaderModule,
+                        entryPoint: entry_frag,
+                        targets: [{
+                            format: canvasFormat
+                        }]
+                    },
+                });
+                return pipeline;
+            }
+    
+            main();
+        </script>
+
+        <div align="center">
+            <canvas id="webgpu" width=512, height=512>
+            </canvas>
+        </div>
+    </body>
+</html>
