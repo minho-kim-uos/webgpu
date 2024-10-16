@@ -6,6 +6,11 @@
         <h1 align=center>Two Pipelines</h1>
         <script type="module">
             const loc_position = 3;
+            const loc_color = 5;
+            const loc_texCoords = 2;
+            const loc_color_inter_stage = 1;
+            const loc_texCoords_inter_stage = 3;
+
             async function main() {
                 const adapter = await navigator.gpu?.requestAdapter();
                 const device = await adapter?.requestDevice();
@@ -20,80 +25,168 @@
                     format: preferredFormat,
                 });
 
-                const vertices = new Float32Array([
-                    -0.5, 0.8,
-                    -0.8,-0.8,
-                    -0.2,-0.8,
-                     0.5, 0.8,
-                     0.2,-0.8,
-                     0.8,-0.8,
-                     0.5, 0.8,
-                     0.2,-0.8,
-                     0.8,-0.8,
+                /////////////////////////////////////////////////////////
+                // triangle vertex buffer
+                /////////////////////////////////////////////////////////
+                const vertices_triangle = new Float32Array([
+                //  ---------  -------------
+                //   position     color
+                //  ---------  -------------
+                    -0.5, 0.4, 1.0, 0.0, 0.0,
+                    -0.9,-0.4, 0.0, 1.0, 0.0,
+                    -0.1,-0.4, 0.0, 0.0, 1.0,
                 ]);
-
-                const vertexBuffer = device.createBuffer({
+                const vertexBuffer_triangle = device.createBuffer({
                     label:"triangle vertices",
-                    size: vertices.byteLength,
+                    size: vertices_triangle.byteLength,
                     usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
                 });
 
-                device.queue.writeBuffer(vertexBuffer, 0, vertices);
+                device.queue.writeBuffer(vertexBuffer_triangle, 0, vertices_triangle);
 
-                const vertexBufferLayout = {
-                                    arrayStride: 4*2,
-                                    attributes: [{
+                const vertexBufferLayout_triangle = {
+                                    arrayStride: 4*5,
+                                    attributes: [
+                                    {
                                         format: "float32x2",
                                         offset: 0,
                                         shaderLocation: loc_position,
-                                    }]};
+                                    },
+                                    {
+                                        format: "float32x3",
+                                        offset: 4*2,
+                                        shaderLocation: loc_color,
+                                    },
+                                    ]};
+ 
+
+                /////////////////////////////////////////////////////////
+                // quad vertex buffer
+                /////////////////////////////////////////////////////////
+                const vertices_quad = new Float32Array([
+                    // position
+                     0.1,-0.4,
+                     0.9,-0.4,
+                     0.9, 0.4,
+                     0.9, 0.4,
+                     0.1, 0.4,
+                     0.1,-0.4,
+
+                    // texture coordinates
+                     0.0, 0.0,
+                     1.0, 0.0,
+                     1.0, 1.0,
+                     1.0, 1.0,
+                     0.0, 1.0,
+                     0.0, 0.0,
+                ]);
+                const vertexBuffer_quad = device.createBuffer({
+                    label:"quad vertices",
+                    size: vertices_quad.byteLength,
+                    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+                });
+
+                device.queue.writeBuffer(vertexBuffer_quad, 0, vertices_quad);
+
+                const vertexBufferLayout_quad_position = {
+                                    arrayStride: 4*2,
+                                    attributes: [
+                                    {
+                                        format: "float32x2",
+                                        offset: 0,
+                                        shaderLocation: loc_position,
+                                    }]
+                };
+                const vertexBufferLayout_quad_texCoords = {
+                                    arrayStride: 4*2,
+                                    attributes: [
+                                    {
+                                        format: "float32x2",
+                                        offset: 0,
+                                        shaderLocation: loc_texCoords,
+                                    }]
+                };
+ 
+
                 const src_shader = `
-                    @vertex fn main_vert(@location(${loc_position}) position: vec2f)
-                        -> @builtin(position) vec4f {
-                        return vec4f(position, 0, 1);
+                    struct VertexOutTriangle {
+                        @builtin(position) position: vec4f,
+                        @location(${loc_color_inter_stage}) color: vec3f,
+                    };
+                    @vertex fn main_vert_triangle(
+                            @location(${loc_position}) position: vec2f,
+                            @location(${loc_color}) color: vec3f,
+                        ) -> VertexOutTriangle {
+                        var vertexOut : VertexOutTriangle;
+                        vertexOut.position = vec4f(position, 0, 1);
+                        vertexOut.color = color;
+                        return vertexOut;
                     }
 
-                    @fragment fn main_frag_red() -> @location(0) vec4f {
-                        return vec4f(1, 0, 0, 1);
+                    @fragment fn main_frag_triangle(
+                        @location(${loc_color_inter_stage}) color: vec3f) -> @location(0) vec4f {
+                        return vec4f(color, 1);
                     }
 
-                    @fragment fn main_frag_blue() -> @location(0) vec4f {
-                        return vec4f(0, 0, 1, 1);
+                    struct VertexOutQuad {
+                        @builtin(position) position: vec4f,
+                        @location(${loc_texCoords_inter_stage}) texCoords: vec2f,
+                    };
+
+                    @vertex fn main_vert_quad(
+                            @location(${loc_position}) position: vec2f,
+                            @location(${loc_texCoords}) texCoords: vec2f
+                        ) -> VertexOutQuad {
+                        var vertexOut: VertexOutQuad;
+                        vertexOut.position = vec4f(position, 0, 1);
+                        vertexOut.texCoords = texCoords;
+                        return vertexOut;
+                    }
+
+                    @fragment fn main_frag_quad(
+                        @location(${loc_texCoords_inter_stage}) texCoords: vec2f) -> @location(0) vec4f {
+                        if(length(texCoords - vec2f(0.5,0.5)) <= 0.16) {
+                            return vec4f(1,0,0,1);
+                        }
+                        else {
+                            return vec4f(0,0,1,1);
+                        }
                     }
                 `;
                 const shaderModule = device.createShaderModule({
-                    label: "solid triangle shaders",
+                    label: "shaders",
                     code:src_shader,
                 });
 
-                const pipeline_red = device.createRenderPipeline({
-                    label: "red triangle pipeline",
+                const pipeline_triangle = device.createRenderPipeline({
+                    label: "triangle pipeline",
                     layout: "auto",
                     vertex: {
                         module:shaderModule,
-                        entryPoint: "main_vert",
-                        buffers: [vertexBufferLayout],
+                        entryPoint: "main_vert_triangle",
+                        buffers: [vertexBufferLayout_triangle],
                     },
                     fragment: {
                         module:shaderModule,
-                        entryPoint: "main_frag_red",
+                        entryPoint: "main_frag_triangle",
                         targets: [{
                             format: preferredFormat
                         }]
                     },
                 });
 
-                const pipeline_blue = device.createRenderPipeline({
-                    label: "blue triangle pipeline",
+                const pipeline_quad = device.createRenderPipeline({
+                    label: "quad pipeline",
                     layout: "auto",
                     vertex: {
                         module:shaderModule,
-                        entryPoint: "main_vert",
-                        buffers: [vertexBufferLayout],
+                        entryPoint: "main_vert_quad",
+                        buffers: [vertexBufferLayout_quad_position,
+                                  vertexBufferLayout_quad_texCoords],
                     },
                     fragment: {
                         module:shaderModule,
-                        entryPoint: "main_frag_blue",
+                        entryPoint: "main_frag_quad",
                         targets: [{
                             format: preferredFormat
                         }]
@@ -109,13 +202,14 @@
                         storeOp: "store",
                     }]
                 });
-                passRender.setPipeline(pipeline_red);
-                passRender.setVertexBuffer(0, vertexBuffer, 0);
+                passRender.setPipeline(pipeline_triangle);
+                passRender.setVertexBuffer(0, vertexBuffer_triangle, 0);
                 passRender.draw(3);
 
-                passRender.setPipeline(pipeline_blue);
-                passRender.setVertexBuffer(0, vertexBuffer, 4*2*3);
-                passRender.draw(3);
+                passRender.setPipeline(pipeline_quad);
+                passRender.setVertexBuffer(0, vertexBuffer_quad, 0);
+                passRender.setVertexBuffer(1, vertexBuffer_quad, 4*2*6);
+                passRender.draw(6);
 
                 passRender.end();
                 const commandBuffer = encoder.finish();
