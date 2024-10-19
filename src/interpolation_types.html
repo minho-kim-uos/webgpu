@@ -1,0 +1,323 @@
+<html>
+    <head>
+        <title>Interpolation Types</title>
+    </head>
+    <body>
+        <h1 align=center>Interpolation Types</h1>
+        <ul>
+            <li>To demonstrate the interpolation types set by <a href="https://www.w3.org/TR/WGSL/#interpolate-attr"><tt>@interpolate()</tt></a>.
+                <ul>
+                    <li>left: <tt>linear</tt></li>
+                    <li>right: <tt>perspective</tt> (default)</li>
+                </ul>
+            </li>
+            <li>To demonstrate sharing uniforms between two pipelines.</li>
+        </ul>
+        <script type="module">
+            import {
+              vec3,
+              mat4,
+            } from 'https://wgpu-matrix.org/dist/2.x/wgpu-matrix.module.js';
+
+            const loc_position = 3;
+            const loc_color = 5;
+            const loc_texCoords = 2;
+            const loc_color_inter_stage = 1;
+            const loc_texCoords_inter_stage = 3;
+            const id_group_VP = 0;
+            const id_binding_VP = 4;
+            const id_group_M = 1;
+            const id_binding_M = 5;
+
+            function toRadian(deg) { return deg*Math.PI / 180.0; }
+
+            async function main() {
+                const adapter = await navigator.gpu?.requestAdapter();
+                const device = await adapter?.requestDevice();
+                if(!device) {
+                    throw Error("WebGPU not supported.");
+                }
+                const canvas = document.querySelector("#webgpu");
+                const context = canvas.getContext("webgpu");
+                const preferredFormat = navigator.gpu.getPreferredCanvasFormat();
+                context.configure({
+                    device,
+                    format: preferredFormat,
+                });
+
+
+                /////////////////////////////////////////////////////////
+                // quad vertex buffer
+                /////////////////////////////////////////////////////////
+                const vertices_quad = new Float32Array([
+                     -1,-1,-1, 0, 0,
+                     -1, 1,-1, 1, 0,
+                      1, 1,-1, 1, 1,
+                     -1,-1,-1, 0, 0,
+                      1, 1,-1, 1, 1,
+                      1,-1,-1, 0, 1
+                ]);
+                const vertexBuffer_quad = device.createBuffer({
+                    label:"quad vertices",
+                    size: vertices_quad.byteLength,
+                    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+                });
+
+                device.queue.writeBuffer(vertexBuffer_quad, 0, vertices_quad);
+
+                const vertexBufferLayout_quad= {
+                                    arrayStride: 4*(3+2),
+                                    attributes: [
+                                    {
+                                        format: "float32x3",
+                                        offset: 0,
+                                        shaderLocation: loc_position,
+                                    },
+                                    {
+                                        format: "float32x2",
+                                        offset: 4*3,
+                                        shaderLocation: loc_texCoords,
+                                    }]
+                };
+
+
+                const src_shader = `
+
+                    @group(${id_group_VP}) @binding(${id_binding_VP}) var<uniform> VP: mat4x4<f32>;
+                    @group(${id_group_M}) @binding(${id_binding_M}) var<uniform> M: mat4x4<f32>;
+
+                    struct VertexInfoPerspective {
+                        @builtin(position) position: vec4f,
+                        @location(${loc_texCoords_inter_stage}) @interpolate(perspective) texCoords: vec2f,
+                    };
+
+
+                    @vertex fn main_vert_perspective(
+                            @location(${loc_position}) position: vec3f,
+                            @location(${loc_texCoords}) texCoords: vec2f
+                        ) -> VertexInfoPerspective {
+                        var vertexOut: VertexInfoPerspective;
+                        vertexOut.position = VP*M*vec4f(position, 1);
+                        vertexOut.texCoords = texCoords;
+                        return vertexOut;
+                    }
+
+                    @fragment fn main_frag_perspective(
+                        @location(${loc_texCoords_inter_stage}) @interpolate(perspective) texCoords: vec2f) -> @location(0) vec4f {
+                        if(length(texCoords - vec2f(0.5,0.5)) <= 0.16) {
+                            return vec4f(1,0,0,1);
+                        }
+                        else {
+                            return vec4f(0,0,1,1);
+                        }
+                    }
+
+                    struct VertexInfoLinear {
+                        @builtin(position) position: vec4f,
+                        @location(${loc_texCoords_inter_stage}) @interpolate(linear) texCoords: vec2f,
+                    };
+
+                    @vertex fn main_vert_linear(
+                            @location(${loc_position}) position: vec3f,
+                            @location(${loc_texCoords}) texCoords: vec2f
+                        ) -> VertexInfoLinear {
+                        var vertexOut: VertexInfoLinear;
+                        vertexOut.position = VP*M*vec4f(position, 1);
+                        vertexOut.texCoords = texCoords;
+                        return vertexOut;
+                    }
+
+                    @fragment fn main_frag_linear(
+                        @location(${loc_texCoords_inter_stage}) @interpolate(linear) texCoords: vec2f) -> @location(0) vec4f {
+                        if(length(texCoords - vec2f(0.5,0.5)) <= 0.16) {
+                            return vec4f(1,0,0,1);
+                        }
+                        else {
+                            return vec4f(0,0,1,1);
+                        }
+                    }
+                `;
+                const shaderModule = device.createShaderModule({
+                    label: "shaders",
+                    code:src_shader,
+                });
+
+                const bindGroupLayout_VP = device.createBindGroupLayout({
+                    entries:[
+                        {
+                            binding:id_binding_VP,
+                            visibility:GPUShaderStage.VERTEX,
+                            buffer:{},
+                        }
+                    ]
+                });
+                const bindGroupLayout_M = device.createBindGroupLayout({
+                    entries:[
+                        {
+                            binding:id_binding_M,
+                            visibility:GPUShaderStage.VERTEX,
+                            buffer:{},
+                        }
+                    ]
+                });
+ 
+                const pipelineLayout = device.createPipelineLayout({
+                    bindGroupLayouts:[
+                        bindGroupLayout_VP,
+                        bindGroupLayout_M
+                    ]
+                });
+
+                const pipeline_perspective = device.createRenderPipeline({
+                    label: "perspective interpolation pipeline",
+                    layout: pipelineLayout,
+                    vertex: {
+                        module:shaderModule,
+                        entryPoint: "main_vert_perspective",
+                        buffers: [vertexBufferLayout_quad],
+                    },
+                    fragment: {
+                        module:shaderModule,
+                        entryPoint: "main_frag_perspective",
+                        targets: [{
+                            format: preferredFormat
+                        }]
+                    },
+                });
+
+                const pipeline_linear = device.createRenderPipeline({
+                    label: "linear interpolation pipeline",
+                    layout: pipelineLayout,
+                    vertex: {
+                        module:shaderModule,
+                        entryPoint: "main_vert_linear",
+                        buffers: [vertexBufferLayout_quad],
+                    },
+                    fragment: {
+                        module:shaderModule,
+                        entryPoint: "main_frag_linear",
+                        targets: [{
+                            format: preferredFormat
+                        }]
+                    },
+                });
+
+
+                const uniformBuffer_VP = device.createBuffer({
+                    size: 4 * 16, // 4x4 matrix
+                    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+                });
+                const uniformBuffer_M_perspective = device.createBuffer({
+                    size: 4 * 16, // 4x4 matrix
+                    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+                });
+                const uniformBuffer_M_linear = device.createBuffer({
+                    size: 4 * 16, // 4x4 matrix
+                    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+                });
+                
+                const bindGroup_VP = device.createBindGroup({
+                    label:"bind group (VP)",
+                    layout: bindGroupLayout_VP,
+                    entries:[
+                        {
+                            binding:id_binding_VP,
+                            resource:{buffer:uniformBuffer_VP}
+                        },
+                    ],
+                });
+                const bindGroup_M_perspective = device.createBindGroup({
+                    label:"bind group (M, perspective)",
+                    layout: bindGroupLayout_M,
+                    entries:[
+                        {
+                            binding:id_binding_M,
+                            resource:{buffer:uniformBuffer_M_perspective}
+                        },
+                    ],
+                });
+                const bindGroup_M_linear = device.createBindGroup({
+                    label:"bind group (M, linear)",
+                    layout: bindGroupLayout_M,
+                    entries:[
+                        {
+                            binding:id_binding_M,
+                            resource:{buffer:uniformBuffer_M_linear}
+                        },
+                    ],
+                });
+
+                {
+                    let P = mat4.perspective(toRadian(60), 1, 0.1, 5);
+                    let V = mat4.translation([0, 0, -3]);
+                    let VP = mat4.mul(P, V);
+
+                    device.queue.writeBuffer(
+                        uniformBuffer_VP,
+                        0,
+                        VP.buffer,
+                        VP.byteOffset,
+                        VP.byteLength
+                    );
+                }
+                {
+                    let M = mat4.rotationY(toRadian(-90));
+                    device.queue.writeBuffer(
+                        uniformBuffer_M_perspective,
+                        0,
+                        M.buffer,
+                        M.byteOffset,
+                        M.byteLength
+                    );
+ 
+                }
+                {
+                    let M = mat4.rotationY(toRadian(90));
+                    device.queue.writeBuffer(
+                        uniformBuffer_M_linear,
+                        0,
+                        M.buffer,
+                        M.byteOffset,
+                        M.byteLength
+                    );
+ 
+                }
+
+                const encoder = device.createCommandEncoder();
+                const passRender = encoder.beginRenderPass({
+                    colorAttachments: [{
+                        view: context.getCurrentTexture().createView(),
+                        loadOp: "clear",
+                        clearValue: {r:.5, g:.5, b:.5, a:1},
+                        storeOp: "store",
+                    }]
+                });
+
+                passRender.setPipeline(pipeline_perspective);
+                passRender.setVertexBuffer(0, vertexBuffer_quad, 0);
+                passRender.setBindGroup(id_group_VP, bindGroup_VP);
+                passRender.setBindGroup(id_group_M, bindGroup_M_perspective);
+                passRender.draw(6);
+
+                passRender.setPipeline(pipeline_linear);
+                passRender.setVertexBuffer(0, vertexBuffer_quad, 0);
+                passRender.setBindGroup(id_group_VP, bindGroup_VP);
+                passRender.setBindGroup(id_group_M, bindGroup_M_linear);
+                passRender.draw(6);
+
+
+                passRender.end();
+                const commandBuffer = encoder.finish();
+                device.queue.submit([commandBuffer]);
+            }
+
+   
+            main();
+        </script>
+
+        <div align="center">
+            <canvas id="webgpu" width=512, height=512>
+            </canvas>
+        </div>
+    </body>
+</html>
