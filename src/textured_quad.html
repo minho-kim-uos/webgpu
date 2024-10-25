@@ -1,0 +1,163 @@
+<html>
+    <head>
+        <title>Textured Quad</title>
+    </head>
+    <body>
+        <h1 align=center>Textured Quad</h1>
+        <script type="module">
+            const loc_position = 3;
+            const loc_texCoords = 2;
+            const loc_inter_stage_texCoords = 1;
+            const group_texture = 0;
+            const binding_sampler = 2;
+            const binding_texture = 7;
+            async function main() {
+                const adapter = await navigator.gpu?.requestAdapter();
+                const device = await adapter?.requestDevice();
+                if(!device) {
+                    throw Error("WebGPU not supported.");
+                }
+                const canvas = document.querySelector("#webgpu");
+                const context = canvas.getContext("webgpu");
+                const preferredFormat = navigator.gpu.getPreferredCanvasFormat();
+                context.configure({
+                    device,
+                    format: preferredFormat,
+                });
+
+                const vertices = new Float32Array([
+                    -.8,-.8, 0, 0,
+                     .8,-.8, 1, 0,
+                     .8, .8, 1, 1,
+                    -.8,-.8, 0, 0,
+                     .8, .8, 1, 1,
+                    -.8, .8, 0, 1
+                ]);
+
+                const vertexBuffer = device.createBuffer({
+                    label:"quad vertices",
+                    size: vertices.byteLength,
+                    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+                });
+
+                device.queue.writeBuffer(vertexBuffer, 0, vertices);
+
+
+                const url = "../resource/irumae_43.png";
+                const response = await fetch("../resource/irumae_43.png");
+                const blob = await response.blob();
+                const bitmap = await createImageBitmap(blob, { colorSpaceConversion: "none" });
+                const texture = device.createTexture({
+                    label: url,
+                    format: "rgba8unorm",
+                    size: [bitmap.width, bitmap.height],
+                    usage:  GPUTextureUsage.TEXTURE_BINDING |
+                            GPUTextureUsage.COPY_DST |
+                            GPUTextureUsage.RENDER_ATTACHMENT,
+                });
+                device.queue.copyExternalImageToTexture(
+                    { source: bitmap, flipY: true },
+                    { texture: texture },
+                    { width: bitmap.width, height: bitmap.height },
+                );
+
+                const sampler = device.createSampler({magFilter:"linear", minFilter:"linear"});
+
+
+                const src_shaders = `
+                    @group(${group_texture}) @binding(${binding_sampler}) var my_sampler: sampler;
+                    @group(${group_texture}) @binding(${binding_texture}) var texture: texture_2d<f32>;
+                    struct VertexInfo {
+                        @builtin(position) position: vec4f,
+                        @location(${loc_inter_stage_texCoords}) texCoords: vec2f
+                    };
+                    @vertex fn main_vert(
+                        @location(${loc_position}) position: vec2f,
+                        @location(${loc_texCoords}) texCoords: vec2f
+                        )
+                        -> VertexInfo {
+                        var vertex: VertexInfo;
+                        vertex.position = vec4f(position, 0, 1);
+                        vertex.texCoords = texCoords;
+                        return vertex;
+                    }
+                    @fragment fn main_frag(@location(${loc_inter_stage_texCoords}) texCoords: vec2f)
+                        -> @location(0) vec4f {
+                          return textureSample(texture, my_sampler, texCoords);
+                    }
+                `;
+                const shaderModule = device.createShaderModule({
+                    label: "textured quad shader",
+                    code:src_shaders,
+                });
+
+                const pipeline = device.createRenderPipeline({
+                    label: "textured quad pipeline",
+                    layout: "auto",
+                    vertex: {
+                        module:shaderModule,
+                        entryPoint: "main_vert",
+                        buffers: [
+                                    {
+                                        arrayStride: 4*(2+2),
+                                        attributes: [
+                                            {
+                                                format: "float32x2",
+                                                offset: 0,
+                                                shaderLocation: loc_position,
+                                            },
+                                            {
+                                                format: "float32x2",
+                                                offset: 4*2,
+                                                shaderLocation: loc_texCoords,
+                                            }
+                                        ],
+                                    }
+                         ],
+                    },
+                    fragment: {
+                        module:shaderModule,
+                        entryPoint: "main_frag",
+                        targets: [{
+                            format: preferredFormat
+                        }]
+                    },
+                });
+
+                const bindGroup = device.createBindGroup({
+                    layout: pipeline.getBindGroupLayout(group_texture),
+                    entries:[
+                        { binding: binding_sampler, resource: sampler },
+                        { binding: binding_texture, resource: texture.createView() },
+                    ],
+                });
+ 
+                const encoder = device.createCommandEncoder();
+                const passRender = encoder.beginRenderPass({
+                    colorAttachments: [{
+                        view: context.getCurrentTexture().createView(),
+                        loadOp: "clear",
+                        clearValue: {r:0, g:0, b:0.4, a:1},
+                        storeOp: "store",
+                    }]
+                });
+                passRender.setPipeline(pipeline);
+                passRender.setVertexBuffer(0, vertexBuffer);
+                passRender.setBindGroup(group_texture, bindGroup);
+                passRender.draw(6);
+                passRender.end();
+                const commandBuffer = encoder.finish();
+                device.queue.submit([commandBuffer]);
+            }
+
+
+
+            main();
+        </script>
+
+        <div align="center">
+            <canvas id="webgpu" width=512, height=512>
+            </canvas>
+        </div>
+    </body>
+</html>
