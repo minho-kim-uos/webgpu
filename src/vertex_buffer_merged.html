@@ -1,0 +1,161 @@
+<html>
+    <head>
+        <title>Vertex Buffer (separate but merged in one buffer)</title>
+    </head>
+    <body>
+        <h1 align=center>Vertex Buffer (separate but merged in one buffer)</h1>
+        <script type="module">
+            const loc_position = 0;
+            const loc_color = 2;
+            const loc_texCoords = 1;
+            const loc_color_inter_stage = 5;
+            const loc_texCoords_inter_stage = 7;
+            async function main() {
+                const adapter = await navigator.gpu?.requestAdapter();
+                const device = await adapter?.requestDevice();
+                if(!device) {
+                    throw Error("WebGPU not supported.");
+                }
+                const canvas = document.querySelector("#webgpu");
+                const context = canvas.getContext("webgpu");
+                const preferredFormat = navigator.gpu.getPreferredCanvasFormat();
+                context.configure({
+                    device,
+                    format: preferredFormat,
+                });
+
+                const vertices = new Float32Array([
+                    // positions
+                    -.9, -.9,
+                     .9, -.9,
+                     .9,  .9,
+                    -.9, -.9,
+                     .9,  .9,
+                    -.9,  .9,
+                    // colors
+                    1, 0, 0,
+                    0, 1, 0,
+                    0, 0, 1,
+                    1, 0, 0,
+                    0, 0, 1,
+                    1, 1, 1,
+                    // texture coordinates
+                    0, 0,
+                    1, 0,
+                    1, 1,
+                    0, 0,
+                    1, 1,
+                    0, 1,
+                ]);
+                const vertexBuffer = device.createBuffer({
+                    label:"vertex buffer)",
+                    size: vertices.byteLength,
+                    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+                });
+                device.queue.writeBuffer(vertexBuffer, 0, vertices);
+
+                const src_shaders = `
+                    struct VertexInfo {
+                        @builtin(position)                      position : vec4f,
+                        @location(${loc_color_inter_stage})     color    : vec3f,
+                        @location(${loc_texCoords_inter_stage}) texCoords: vec2f
+                    };
+                    @vertex fn main_vert(
+                        @location(${loc_position})  position: vec2f,
+                        @location(${loc_color})     color   : vec3f,
+                        @location(${loc_texCoords}) texCoords: vec2f
+                        ) -> VertexInfo {
+                        var vertexOut: VertexInfo;
+                        vertexOut.position = vec4f(position, 0, 1);
+                        vertexOut.color = color;
+                        vertexOut.texCoords = texCoords;
+                        return vertexOut;
+                    }
+                    @fragment fn main_frag(vertexIn: VertexInfo)
+                        -> @location(0) vec4f {
+                        if(length(vertexIn.texCoords - vec2f(.5,.5)) < .2) {
+                            discard;
+                        } 
+                        return vec4f(vertexIn.color, 1);
+                    }
+                `;
+                const shaderModule = device.createShaderModule({
+                    label: "quad shader",
+                    code:src_shaders,
+                });
+
+                const pipeline = device.createRenderPipeline({
+                    label: "quad pipeline",
+                    layout: "auto",
+                    vertex: {
+                        module:shaderModule,
+                        entryPoint: "main_vert",
+                        buffers: [
+                            {
+                                arrayStride: 4*2,
+                                attributes: [
+                                    {
+                                        format: "float32x2",
+                                        offset: 0,
+                                        shaderLocation: loc_position,
+                                    }],
+                             },
+                             {
+                                arrayStride: 4*3,
+                                attributes: [
+                                    {
+                                        format: "float32x3",
+                                        offset: 0,
+                                        shaderLocation: loc_color,
+                                    }],
+                             },
+                             {
+                                arrayStride: 4*2,
+                                attributes: [
+                                    {
+                                        format: "float32x2",
+                                        offset: 0,
+                                        shaderLocation: loc_texCoords,
+                                    }],
+                             }
+                        ]
+                    },
+                    fragment: {
+                        module:shaderModule,
+                        entryPoint: "main_frag",
+                        targets: [{ format: preferredFormat }]
+                    },
+                });
+ 
+                const encoder = device.createCommandEncoder();
+                const passRender = encoder.beginRenderPass({
+                    colorAttachments: [{
+                        view: context.getCurrentTexture().createView(),
+                        loadOp: "clear",
+                        clearValue: {r:.5, g:.5, b:.5, a:1},
+                        storeOp: "store",
+                    }]
+                });
+                passRender.setPipeline(pipeline);
+
+                // Set the same vertex buffer three times with different offsets.
+                passRender.setVertexBuffer(0, vertexBuffer, 0);
+                passRender.setVertexBuffer(1, vertexBuffer, 4*2*6);
+                passRender.setVertexBuffer(2, vertexBuffer, 4*(2+3)*6);
+
+                passRender.draw(6);
+                passRender.end();
+                const commandBuffer = encoder.finish();
+                device.queue.submit([commandBuffer]);
+            }
+
+    
+            main();
+        </script>
+
+        <div align="center">
+            <canvas id="webgpu" width=512, height=512>
+            </canvas>
+        </div>
+    </body>
+</html>

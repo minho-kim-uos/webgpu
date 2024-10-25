@@ -34,15 +34,6 @@
 
                 device.queue.writeBuffer(vertexBuffer, 0, vertices);
 
-                const layoutVertexBuffer = {
-                    arrayStride: 8,
-                    attributes: [{
-                        format: "float32x2",
-                        offset: 0,
-                        shaderLocation: loc_position,
-                    }],
-                };
-
                 const src_shaders = `
                     @vertex fn main_vert(@location(${loc_position}) position: vec2f)
                         -> @builtin(position) vec4f {
@@ -63,19 +54,23 @@
                     vertex: {
                         module:shaderModule,
                         entryPoint: "main_vert",
-                        buffers: [{ arrayStride: 8,
-                                    attributes: [{
-                                        format: "float32x2",
-                                        offset: 0,
-                                        shaderLocation: loc_position,
-                                    }],
+                        buffers: [
+                                    {
+                                        arrayStride: 8,
+                                        attributes: [{
+                                            format: "float32x2",
+                                            offset: 0,
+                                            shaderLocation: loc_position,
+                                        }],
  
+                                    }
+                         ],
                     },
                     fragment: {
                         module:shaderModule,
                         entryPoint: "main_frag",
                         targets: [{
-                            format: canvasFormat
+                            format: preferredFormat
                         }]
                     },
                 });
@@ -91,7 +86,7 @@
                 });
                 passRender.setPipeline(pipeline);
                 passRender.setVertexBuffer(0, vertexBuffer);
-                passRender.draw(countVertices);
+                passRender.draw(3);
                 passRender.end();
                 const commandBuffer = encoder.finish();
                 device.queue.submit([commandBuffer]);
@@ -99,10 +94,6 @@
 
 
 
-            function initPipeline(device, canvasFormat, shaderModule, entry_vert, entry_frag, layoutVertexBuffer) {
-               return pipeline;
-            }
-    
             main();
         </script>
 

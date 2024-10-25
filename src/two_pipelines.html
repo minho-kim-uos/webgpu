@@ -145,7 +145,7 @@
 
                     @fragment fn main_frag_quad(
                         @location(${loc_texCoords_inter_stage}) texCoords: vec2f) -> @location(0) vec4f {
-                        if(length(texCoords - vec2f(0.5,0.5)) <= 0.16) {
+                        if(length(texCoords - vec2f(0.5,0.5)) <= 0.3) {
                             return vec4f(1,0,0,1);
                         }
                         else {
