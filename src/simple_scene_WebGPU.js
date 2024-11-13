@@ -1,17 +1,13 @@
-import {
-    vec3,
-    mat4,
-    utils,
-} from "../lib/wgpu-matrix/2.x/wgpu-matrix.module.min.js";
+import {vec3, mat4, utils} from 'wgpu-matrix';
 
 "use strict";
 
 const locations = {position:1, normal:3};
 
 const id_group = 0;
-const id_binding_matrices = 4;
-const id_binding_light = 3;
-const id_binding_material = 7;
+const bindings = {matrices:4, light:3, material:7};
+
+const loc_inter_stage = {normal: 2};
 
 async function main() {
     const adapter = await navigator.gpu?.requestAdapter();
@@ -27,7 +23,6 @@ async function main() {
         format: preferredFormat,
     });
 
-    const szBufMatrices = 4*16*2; // 2 x mat4x4
 
     const {module:shaderModule, entry_vert, entry_frag} = initShaderModule(device);
 
@@ -57,42 +52,34 @@ async function main() {
     const plane = initPlane(device, pipeline, locations, shared.VP, shared.V, shared.uniformBuffer_light);
 
 
+    const szBufMatrices = 4*16*2; // 2 x mat4x4
     const matrices = new Float32Array(szBufMatrices/4);
+
+    const depthTexture = device.createTexture({
+                size: [context.getCurrentTexture().width, context.getCurrentTexture().height],
+                format: 'depth24plus',
+                usage: GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+
     const renderPassDescriptor = {
-       colorAttachments: [{
+        colorAttachments: [{
               // view: <- to be filled out when we render
                 loadOp: "clear",
                 clearValue: {r:0.5, g:0.5, b:0.5, a:1},
                 storeOp: "store",
         }],
         depthStencilAttachment: {
-              // view: <- to be filled out when we render
+              view: depthTexture.createView(),
               depthClearValue: 1.0,
               depthLoadOp: 'clear',
               depthStoreOp: 'store',
         },
     };
 
-    let depthTexture;
-
-    function tick() {
+    function render() {
 
         const canvasTexture = context.getCurrentTexture();
         renderPassDescriptor.colorAttachments[0].view = canvasTexture.createView();
-
-        if(!depthTexture ||
-            depthTexture.width !== canvasTexture.width ||
-            depthTexture.height !== canvasTexture.height) {
-            if (depthTexture) {
-                depthTexture.destroy();
-            }
-            depthTexture = device.createTexture({
-                size: [canvasTexture.width, canvasTexture.height],
-                format: 'depth24plus',
-                usage: GPUTextureUsage.RENDER_ATTACHMENT,
-            });
-        }
-        renderPassDescriptor.depthStencilAttachment.view = depthTexture.createView();
 
         let encoder = device.createCommandEncoder();
         let passRender = encoder.beginRenderPass(renderPassDescriptor);
@@ -107,10 +94,10 @@ async function main() {
 
         device.queue.submit([encoder.finish()]);
 
-        requestAnimationFrame(tick);
+        requestAnimationFrame(render);
     }
 
-    requestAnimationFrame(tick);
+    requestAnimationFrame(render);
 }
 
 function render_object(device, passRender, matrices, obj)
@@ -130,12 +117,12 @@ function render_object(device, passRender, matrices, obj)
 function initShaderModule(device) {
     const source = `
         struct Matrices {
-            MVP: mat4x4<f32>,
-            N: mat4x4<f32>,
+            MVP: mat4x4f,
+            N: mat4x4f,
         };
         struct VSoutput {
             @builtin(position) position: vec4f,
-            @location(0) normal: vec3f,
+            @location(${loc_inter_stage.normal}) normal: vec3f,
         };
         struct Light {
             position: vec4f,
@@ -146,9 +133,9 @@ function initShaderModule(device) {
             ambient: vec3f,
             diffuse: vec3f,
         };
-        @group(${id_group}) @binding(${id_binding_matrices}) var<uniform> matrices: Matrices;
-        @group(${id_group}) @binding(${id_binding_light}) var<uniform> light: Light;
-        @group(${id_group}) @binding(${id_binding_material}) var<uniform> material: Material;
+        @group(${id_group}) @binding(${bindings.matrices}) var<uniform> matrices: Matrices;
+        @group(${id_group}) @binding(${bindings.light}) var<uniform> light: Light;
+        @group(${id_group}) @binding(${bindings.material}) var<uniform> material: Material;
 
 
         @vertex fn main_vert(@location(${locations.position}) position: vec4f,
@@ -160,8 +147,9 @@ function initShaderModule(device) {
             return vsOut;
         }
 
-        @fragment fn main_frag(vsOut: VSoutput) -> @location(0) vec4f {
-            var n = normalize(vsOut.normal);
+        @fragment fn main_frag(@location(${loc_inter_stage.normal}) normal: vec3f)
+            -> @location(0) vec4f {
+            var n = normalize(normal);
             var l = normalize(light.position.xyz);
 
             var l_dot_n = max(dot(l,n), 0.0);
@@ -301,9 +289,9 @@ function initCube(device, pipeline, locations, VP, V, uniformBuffer_light) {
         label:"bind group for the cube",
         layout: pipeline.getBindGroupLayout(id_group),
         entries:[
-            { binding:id_binding_matrices, resource:{buffer:uniformBuffer_matrices} },
-            { binding:id_binding_light, resource:{buffer:uniformBuffer_light} },
-            { binding:id_binding_material, resource:{buffer:uniformBuffer_material} },
+            { binding:bindings.matrices, resource:{buffer:uniformBuffer_matrices} },
+            { binding:bindings.light, resource:{buffer:uniformBuffer_light} },
+            { binding:bindings.material, resource:{buffer:uniformBuffer_material} },
         ],
     });
 
@@ -357,9 +345,9 @@ function initPlane(device, pipeline, locations, VP, V, uniformBuffer_light) {
         label:"bind group for the plane",
         layout: pipeline.getBindGroupLayout(id_group),
         entries:[
-            { binding:id_binding_matrices, resource:{buffer:uniformBuffer_matrices} },
-            { binding:id_binding_light, resource:{buffer:uniformBuffer_light} },
-            { binding:id_binding_material, resource:{buffer:uniformBuffer_material} },
+            { binding:bindings.matrices, resource:{buffer:uniformBuffer_matrices} },
+            { binding:bindings.light, resource:{buffer:uniformBuffer_light} },
+            { binding:bindings.material, resource:{buffer:uniformBuffer_material} },
         ],
     });
 
