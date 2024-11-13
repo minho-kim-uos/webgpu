@@ -199,14 +199,13 @@
                     usage: GPUTextureUsage.RENDER_ATTACHMENT,
                 });
  
-                let V, MV, P, MVP;
-                V = mat4.translation([0, 0, -3]);
+                let VP, P, MVP;
                 P = mat4.perspective(utils.degToRad(60), 1, 0.1, 6);
+                VP = mat4.translate(P, [0, 0, -3]);
 
                 function render(time) {
                     
-                    MV = mat4.rotate(V, [0,1,0], time*0.001);
-                    MVP = mat4.multiply(P, MV);
+                    MVP = mat4.rotate(VP, [0,1,0], time*0.001);
 
                     canvasTexture = context.getCurrentTexture();
                         
