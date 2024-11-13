@@ -31,41 +31,35 @@
             // https://github.com/g-truc/glm/blob/master/glm/ext/matrix_projection.inl
             function project(p_obj, MVP, viewport)
             {
-            	let	tmp = vec4.transformMat4([p_obj[0], p_obj[1], p_obj[2], 1], MVP);
-            
-            	for(let i in [0,1,2])	tmp[i] /= tmp[3];
-            
-            	for(let i=0 ; i<2 ; i++)
-            	{
-            		tmp[i] = (0.5*tmp[i] + 0.5) * viewport[i+2] + viewport[i];
-            	}
-            
-            	return tmp;
+                let tmp = vec4.transformMat4(p_obj, MVP);
+                tmp = tmp.map((x) => x/tmp[3]); // tmp /= tmp[3]
+                for(let i=0 ; i<2 ; i++) {
+                    tmp[i] = (0.5*tmp[i] + 0.5) * viewport[i+2] + viewport[i];
+                }
+                return tmp;
             }
             
             // https://github.com/g-truc/glm/blob/master/glm/ext/matrix_projection.inl
             function unproject(p_win, MVP, viewport) {
                 let MVP_inv = mat4.invert(MVP);
+                let tmp = mat4.clone(p_win);
             
-                let tmp = mat4.clone([p_win[0], p_win[1], p_win[2], 1.0]);
-            
-                //	for(let i in [0,1]) --> not working!!!???
                 for (let i = 0; i < 2; i++)
-                    tmp[i] = 2.0 * (tmp[i] - viewport[i]) / viewport[i + 2] - 1.0;
+                    tmp[i] = 2.0 * (tmp[i] - viewport[i]) / viewport[i+2] - 1.0;
             
                 let p_obj = vec4.transformMat4(tmp, MVP_inv);
             
-                for (let i in [0, 1, 2]) p_obj[i] /= p_obj[3];
+                p_obj = p_obj.map((x) => x/p_obj[3]);
             
                 return p_obj;
             }
 
             function unproject_vector(vec_win, MVP, viewport)
             {
-            	let	org_win = project([0,0,0], MVP, viewport);
-            	let	vec = unproject([org_win[0]+vec_win[0], org_win[1]+vec_win[1], org_win[2]+vec_win[2]],
-            						MVP, viewport);
-            	return vec;
+                let org_win = project([0,0,0,1], MVP, viewport);
+                let vec = unproject([org_win[0]+vec_win[0], org_win[1]+vec_win[1], org_win[2]+vec_win[2], 1],
+                                    MVP, viewport);
+                return vec;
             }
 
 
@@ -164,11 +158,11 @@
                         let offset = [x - lastX, y - lastY];
                         if (offset[0] != 0 || offset[1] != 0) // For some reason, the offset becomes zero sometimes...
                         {
-                            mat4.copy(VP, P);
-                            mat4.multiply(VP, VP, V);
+                            VP = mat4.clone(P);
+                            VP = mat4.multiply(VP, V);
                             let axis = unproject_vector([offset[1], offset[0], 0], VP,
                                 [0, 0, canvas.clientWidth, canvas.clientHeight]);
-                            mat4.rotate(V, V, utils.degToRad(length2(offset)), [axis[0], axis[1], axis[2]]);
+                            V = mat4.rotate(V, [axis[0], axis[1], axis[2]], utils.degToRad(length2(offset))); 
                         }
                     }
                     lastX = x;
