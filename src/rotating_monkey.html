@@ -1,25 +1,52 @@
 <html>
     <head>
-        <title>Loading an glTF (binary) File</title>
+        <title>Rotating Monkey</title>
     </head>
     <body>
-        <h1 align=center>Loading an glTF (binary) File</h1>
+        <h1 align=center>Rotating Monkey</h1>
         <script type="importmap">
         {
             "imports": {
                 "three": "https://threejs.org/build/three.module.js",
-                "three/addons/": "https://threejs.org/examples/jsm/"
+                "three/addons/": "https://threejs.org/examples/jsm/",
+                "wgpu-matrix": "https://wgpu-matrix.org/dist/2.x/wgpu-matrix.module.js"
             }
+
+
         }</script>
         <script type="module">
             import*as THREE from 'three'
-            import {GLTFLoader} from "three/addons/loaders/GLTFLoader.js";
+            import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+            import {vec3, mat4, utils} from 'wgpu-matrix';
 
             const loc_position = 3;
             const loc_normal = 2;
             const loc_inter_stage_normal = 1;
 
+            const id_group = 0;
+            const binding_matrices = 7;
+
             const format_depth_texture = 'depth24plus';
+
+            
+            // https://github.com/g-truc/glm/blob/master/glm/ext/matrix_projection.inl
+            function unproject(p_win, MVP, viewport) {
+                let MVP_inv = mat4.create();
+                mat4.invert(MVP_inv, MVP);
+            
+                let tmp = mat4.clone([p_win[0], p_win[1], p_win[2], 1.0]);
+            
+                //	for(let i in [0,1]) --> not working!!!???
+                for (let i = 0; i < 2; i++)
+                    tmp[i] = 2.0 * (tmp[i] - viewport[i]) / viewport[i + 2] - 1.0;
+            
+                let p_obj = vec4.create();
+                vec4.transformMat4(p_obj, tmp, MVP_inv);
+            
+                for (let i in [0, 1, 2]) p_obj[i] /= p_obj[3];
+            
+                return p_obj;
+            }
 
             async function main() {
                 const adapter = await navigator.gpu?.requestAdapter();
@@ -74,18 +101,30 @@
 
                 device.queue.writeBuffer(indexBuffer, 0, indices);
 
+                const uniformBuffer = device.createBuffer({
+                    size: 4*4*4,
+                    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+                });
+
+
                 const src_shaders = `
                     struct VertexOut {
                         @builtin(position) position: vec4f,
                         @location(${loc_inter_stage_normal}) normal: vec3f
                     };
 
+                    struct Matrices {
+                        MVP: mat4x4f,
+                    };
+
+                    @group(${id_group}) @binding(${binding_matrices}) var<uniform> matrices:Matrices;
+
                     @vertex fn main_vert(
                         @location(${loc_position}) position: vec3f,
                         @location(${loc_normal}) normal: vec3f)
                         -> VertexOut {
                         var vertex: VertexOut;
-                        vertex.position = vec4f(0.5*position*vec3f(1,1,-1) + vec3f(0,0,0.5), 1);
+                        vertex.position = matrices.MVP * vec4f(position, 1);
                         vertex.normal = normal;
                         return vertex;
                     }
@@ -98,6 +137,7 @@
                     label: "solid triangle shader",
                     code:src_shaders,
                 });
+
 
                 const pipeline = device.createRenderPipeline({
                     label: "solid triangle pipeline",
@@ -135,7 +175,7 @@
                     primitive:{
                         topology: 'triangle-list',
                         cullMode: 'front',
-                        frontFace: 'cw',
+                        frontFace: "cw",    // Blender default winding order???!!!
                     },
                     depthStencil: {
                         depthWriteEnabled: true,
@@ -144,7 +184,14 @@
                     },
                 });
 
-                const canvasTexture = context.getCurrentTexture();
+                const bindGroup = device.createBindGroup({
+                    layout: pipeline.getBindGroupLayout(id_group),
+                    entries:[
+                        { binding: binding_matrices, resource: {buffer: uniformBuffer} },
+                    ],
+                });
+
+                let canvasTexture = context.getCurrentTexture();
 
                 const depthTexture = device.createTexture({
                     size: [canvasTexture.width, canvasTexture.height],
@@ -152,29 +199,48 @@
                     usage: GPUTextureUsage.RENDER_ATTACHMENT,
                 });
  
-                const encoder = device.createCommandEncoder();
-                const passRender = encoder.beginRenderPass({
-                    colorAttachments: [{
-                        view: canvasTexture.createView(),
-                        loadOp: "clear",
-                        clearValue: {r:.3, g:.3, b:.3, a:1},
-                        storeOp: "store",
-                    }],
-                    depthStencilAttachment: {
-                        view: depthTexture.createView(),
-                        depthClearValue: 1.0,
-                        depthLoadOp: 'clear',
-                        depthStoreOp: 'store',
-                    },
-                });
-                passRender.setPipeline(pipeline);
-                passRender.setVertexBuffer(0, vbPosition);
-                passRender.setVertexBuffer(1, vbNormal);
-                passRender.setIndexBuffer(indexBuffer, 'uint16');
-                passRender.drawIndexed(monkey.geometry.index.count);
-                passRender.end();
-                const commandBuffer = encoder.finish();
-                device.queue.submit([commandBuffer]);
+                let V, MV, P, MVP;
+                V = mat4.translation([0, 0, -3]);
+                P = mat4.perspective(utils.degToRad(60), 1, 0.1, 6);
+
+                function render(time) {
+                    
+                    MV = mat4.rotate(V, [0,1,0], time*0.001);
+                    MVP = mat4.multiply(P, MV);
+
+                    canvasTexture = context.getCurrentTexture();
+                        
+                    device.queue.writeBuffer(uniformBuffer, 0, MVP);
+                    const encoder = device.createCommandEncoder();
+                    const passRender = encoder.beginRenderPass({
+                        colorAttachments: [{
+                            view: canvasTexture.createView(),
+                            loadOp: "clear",
+                            clearValue: {r:.3, g:.3, b:.3, a:1},
+                            storeOp: "store",
+                        }],
+                        depthStencilAttachment: {
+                            view: depthTexture.createView(),
+                            depthClearValue: 1.0,
+                            depthLoadOp: 'clear',
+                            depthStoreOp: 'store',
+                        },
+                    });
+                    passRender.setPipeline(pipeline);
+                    passRender.setVertexBuffer(0, vbPosition);
+                    passRender.setVertexBuffer(1, vbNormal);
+                    passRender.setIndexBuffer(indexBuffer, 'uint16');
+                    passRender.setBindGroup(id_group, bindGroup);
+                    passRender.drawIndexed(monkey.geometry.index.count);
+                    passRender.end();
+                    const commandBuffer = encoder.finish();
+                    device.queue.submit([commandBuffer]);
+
+                    requestAnimationFrame(render);
+                }
+
+                requestAnimationFrame(render);
+
             }
 
 

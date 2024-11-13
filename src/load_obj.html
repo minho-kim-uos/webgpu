@@ -83,7 +83,7 @@
                     }
                     @fragment fn main_frag(@location(${loc_inter_stage_normal}) normal: vec3f)
                         -> @location(0) vec4f {
-                        return vec4f(normal, 1);
+                        return vec4f(0.5*(normal + vec3f(1)), 1);
                     }
                 `;
                 const shaderModule = device.createShaderModule({
@@ -127,6 +127,7 @@
                     primitive:{
                         topology: 'triangle-list',
                         cullMode: 'front',
+                        frontFace: 'cw',    // Blender default winding order????!!!!
                     },
                     depthStencil: {
                         depthWriteEnabled: true,
@@ -148,7 +149,7 @@
                     colorAttachments: [{
                         view: canvasTexture.createView(),
                         loadOp: "clear",
-                        clearValue: {r:0, g:0, b:0.4, a:1},
+                        clearValue: {r:.3, g:.3, b:.3, a:1},
                         storeOp: "store",
                     }],
                     depthStencilAttachment: {
