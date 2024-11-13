@@ -1,0 +1,189 @@
+<html>
+    <head>
+        <title>Loading an glTF (binary) File</title>
+    </head>
+    <body>
+        <h1 align=center>Loading an glTF (binary) File</h1>
+        <script type="importmap">
+        {
+            "imports": {
+                "three": "https://threejs.org/build/three.module.js",
+                "three/addons/": "https://threejs.org/examples/jsm/"
+            }
+        }</script>
+        <script type="module">
+            import*as THREE from 'three'
+            import {GLTFLoader} from "three/addons/loaders/GLTFLoader.js";
+
+            const loc_position = 3;
+            const loc_normal = 2;
+            const loc_inter_stage_normal = 1;
+
+            const format_depth_texture = 'depth24plus';
+
+            async function main() {
+                const adapter = await navigator.gpu?.requestAdapter();
+                const device = await adapter?.requestDevice();
+                if(!device) {
+                    throw Error("WebGPU not supported.");
+                }
+                const canvas = document.querySelector("#webgpu");
+                const context = canvas.getContext("webgpu");
+                const preferredFormat = navigator.gpu.getPreferredCanvasFormat();
+                context.configure({
+                    device,
+                    format: preferredFormat,
+                });
+
+                const loader = new GLTFLoader();
+
+                const root = await new Promise((resolve,reject) => {
+                    loader.load("../resource/3dmodels/monkey.glb",
+                        (model) => {resolve(model);},
+                        null,
+                        (error) => {reject(error);});
+                });
+
+                const monkey = root.scene.children[0];
+
+                const positions = monkey.geometry.attributes.position.array;
+                const normals = monkey.geometry.attributes.normal.array;
+                const indices = monkey.geometry.index.array;
+
+                const vbPosition = device.createBuffer({
+                    label:"monkey positions",
+                    size: positions.byteLength,
+                    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+                });
+
+                device.queue.writeBuffer(vbPosition, 0, positions);
+
+                const vbNormal = device.createBuffer({
+                    label:"monkey normals",
+                    size: normals.byteLength,
+                    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+                });
+
+                device.queue.writeBuffer(vbNormal, 0, normals);
+
+                const indexBuffer = device.createBuffer({
+                    label:"monkey indices",
+                    size: indices.byteLength,
+                    usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
+                });
+
+                device.queue.writeBuffer(indexBuffer, 0, indices);
+
+                const src_shaders = `
+                    struct VertexOut {
+                        @builtin(position) position: vec4f,
+                        @location(${loc_inter_stage_normal}) normal: vec3f
+                    };
+
+                    @vertex fn main_vert(
+                        @location(${loc_position}) position: vec3f,
+                        @location(${loc_normal}) normal: vec3f)
+                        -> VertexOut {
+                        var vertex: VertexOut;
+                        vertex.position = vec4f(0.5*position*vec3f(1,1,-1) + vec3f(0,0,0.5), 1);
+                        vertex.normal = normal;
+                        return vertex;
+                    }
+                    @fragment fn main_frag(@location(${loc_inter_stage_normal}) normal: vec3f)
+                        -> @location(0) vec4f {
+                        return vec4f(normal, 1);
+                    }
+                `;
+                const shaderModule = device.createShaderModule({
+                    label: "solid triangle shader",
+                    code:src_shaders,
+                });
+
+                const pipeline = device.createRenderPipeline({
+                    label: "solid triangle pipeline",
+                    layout: "auto",
+                    vertex: {
+                        module:shaderModule,
+                        entryPoint: "main_vert",
+                        buffers: [
+                                    {
+                                        arrayStride: 4*3,
+                                        attributes: [{
+                                            format: "float32x3",
+                                            offset: 0,
+                                            shaderLocation: loc_position,
+                                        }],
+                                    },
+                                    {
+                                        arrayStride: 4*3,
+                                        attributes: [{
+                                            format: "float32x3",
+                                            offset: 0,
+                                            shaderLocation: loc_normal,
+                                        }],
+                                    }
+
+                         ],
+                    },
+                    fragment: {
+                        module:shaderModule,
+                        entryPoint: "main_frag",
+                        targets: [{
+                            format: preferredFormat
+                        }]
+                    },
+                    primitive:{
+                        topology: 'triangle-list',
+                        cullMode: 'front',
+                    },
+                    depthStencil: {
+                        depthWriteEnabled: true,
+                        depthCompare: 'less',
+                        format: format_depth_texture,
+                    },
+                });
+
+                const canvasTexture = context.getCurrentTexture();
+
+                const depthTexture = device.createTexture({
+                    size: [canvasTexture.width, canvasTexture.height],
+                    format: format_depth_texture,
+                    usage: GPUTextureUsage.RENDER_ATTACHMENT,
+                });
+ 
+                const encoder = device.createCommandEncoder();
+                const passRender = encoder.beginRenderPass({
+                    colorAttachments: [{
+                        view: canvasTexture.createView(),
+                        loadOp: "clear",
+                        clearValue: {r:0, g:0, b:0.4, a:1},
+                        storeOp: "store",
+                    }],
+                    depthStencilAttachment: {
+                        view: depthTexture.createView(),
+                        depthClearValue: 1.0,
+                        depthLoadOp: 'clear',
+                        depthStoreOp: 'store',
+                    },
+                });
+                passRender.setPipeline(pipeline);
+                passRender.setVertexBuffer(0, vbPosition);
+                passRender.setVertexBuffer(1, vbNormal);
+                passRender.setIndexBuffer(indexBuffer, 'uint16');
+                passRender.drawIndexed(monkey.geometry.index.count);
+                passRender.end();
+                const commandBuffer = encoder.finish();
+                device.queue.submit([commandBuffer]);
+            }
+
+
+
+            main();
+        </script>
+
+        <div align="center">
+            <canvas id="webgpu" width=512, height=512>
+            </canvas>
+        </div>
+    </body>
+</html>

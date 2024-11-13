@@ -43,8 +43,8 @@
                 device.queue.writeBuffer(vertexBuffer, 0, vertices);
 
 
-                const url = "../resource/irumae_43.png";
-                const response = await fetch("../resource/irumae_43.png");
+                const url = "../resource/images/irumae_43.png";
+                const response = await fetch(url);
                 const blob = await response.blob();
                 const bitmap = await createImageBitmap(blob, { colorSpaceConversion: "none" });
                 const texture = device.createTexture({
