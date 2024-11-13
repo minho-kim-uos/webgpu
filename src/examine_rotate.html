@@ -17,7 +17,7 @@
         <script type="module">
             import*as THREE from 'three'
             import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
-            import {vec3, mat4, utils} from 'wgpu-matrix';
+            import {vec3, vec4, mat4, utils} from 'wgpu-matrix';
 
             const loc_position = 3;
             const loc_normal = 2;
@@ -28,11 +28,24 @@
 
             const format_depth_texture = 'depth24plus';
 
+            // https://github.com/g-truc/glm/blob/master/glm/ext/matrix_projection.inl
+            function project(p_obj, MVP, viewport)
+            {
+            	let	tmp = vec4.transformMat4([p_obj[0], p_obj[1], p_obj[2], 1], MVP);
+            
+            	for(let i in [0,1,2])	tmp[i] /= tmp[3];
+            
+            	for(let i=0 ; i<2 ; i++)
+            	{
+            		tmp[i] = (0.5*tmp[i] + 0.5) * viewport[i+2] + viewport[i];
+            	}
+            
+            	return tmp;
+            }
             
             // https://github.com/g-truc/glm/blob/master/glm/ext/matrix_projection.inl
             function unproject(p_win, MVP, viewport) {
-                let MVP_inv = mat4.create();
-                mat4.invert(MVP_inv, MVP);
+                let MVP_inv = mat4.invert(MVP);
             
                 let tmp = mat4.clone([p_win[0], p_win[1], p_win[2], 1.0]);
             
@@ -40,13 +53,22 @@
                 for (let i = 0; i < 2; i++)
                     tmp[i] = 2.0 * (tmp[i] - viewport[i]) / viewport[i + 2] - 1.0;
             
-                let p_obj = vec4.create();
-                vec4.transformMat4(p_obj, tmp, MVP_inv);
+                let p_obj = vec4.transformMat4(tmp, MVP_inv);
             
                 for (let i in [0, 1, 2]) p_obj[i] /= p_obj[3];
             
                 return p_obj;
             }
+
+            function unproject_vector(vec_win, MVP, viewport)
+            {
+            	let	org_win = project([0,0,0], MVP, viewport);
+            	let	vec = unproject([org_win[0]+vec_win[0], org_win[1]+vec_win[1], org_win[2]+vec_win[2]],
+            						MVP, viewport);
+            	return vec;
+            }
+
+
 
             async function main() {
                 const adapter = await navigator.gpu?.requestAdapter();
@@ -126,7 +148,11 @@
                     dragging = false;
                 };
 
-                const VP = mat4.create();
+                let VP = mat4.create();
+
+                let P = mat4.perspective(utils.degToRad(60), 1, 0.1, 6); 
+                let V = mat4.translation([0,0,-3]);
+
 
                 const length2 = (p) => Math.sqrt(p[0]*p[0] + p[1]*p[1]);
 
@@ -241,14 +267,12 @@
                     usage: GPUTextureUsage.RENDER_ATTACHMENT,
                 });
  
-                let V, MV, P, MVP;
-                V = mat4.translation([0, 0, -3]);
+                let M = mat4.identity();
+                let MVP;
 
                 function render(time) {
                     
-                    MV = mat4.rotate(V, [0,1,0], time*0.001);
-                    P = mat4.perspective(utils.degToRad(60), 1, 0.1, 6);
-                    MVP = mat4.multiply(P, MV);
+                    MVP = mat4.multiply(mat4.multiply(P,V), M);
 
                     canvasTexture = context.getCurrentTexture();
                         
