@@ -1,0 +1,267 @@
+<html>
+    <head>
+        <title>MRT (Multiple Render Targets)</title>
+    </head>
+    <body>
+        <h1 align=center>MRT (Multiple Render Targets)</h1>
+        <script type="module">
+            const loc_position = 3;
+            const loc_texCoords = 2;
+            const loc_inter_stage_texCoords = 1;
+            const loc_inter_stage_instance_index = 2;
+            const group_texture = 0;
+            const binding_sampler = 2;
+            const binding_texture0 = 7;
+            const binding_texture1 = 5;
+//            const format_render_texture = "rgba16float";
+            const format_render_texture = "rgba8unorm";
+            async function main() {
+                const adapter = await navigator.gpu?.requestAdapter();
+                const device = await adapter?.requestDevice();
+                if(!device) {
+                    throw Error("WebGPU not supported.");
+                }
+                const canvas = document.querySelector("#webgpu");
+                const context = canvas.getContext("webgpu");
+                const preferredFormat = navigator.gpu.getPreferredCanvasFormat();
+                context.configure({
+                    device,
+                    format: preferredFormat,
+                });
+
+                // initialize the vertex buffer for the triangle
+                const vertsTri = new Float32Array([
+                     .0, .8,
+                    -.8,-.8,
+                     .8,-.8,
+                ]);
+                const vbTri = device.createBuffer({
+                    label:"triangle vertices",
+                    size: vertsTri.byteLength,
+                    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+                });
+                device.queue.writeBuffer(vbTri, 0, vertsTri);
+
+
+                // initialize the ``render texture'
+                const textures = [
+                    device.createTexture({
+                        size:[512, 512],
+                        format: format_render_texture,
+                        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+                    }),
+                    device.createTexture({
+                        size:[512, 512],
+                        format: format_render_texture,
+                        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+                    }),
+                ];
+
+                // shader module to render the triangle onto the `render texture'
+                const shaderModuleTri = device.createShaderModule({
+                    label: "solid triangle shader",
+                    code: `
+                        @vertex fn main_vert(@location(${loc_position}) position: vec2f)
+                            -> @builtin(position) vec4f {
+                            return vec4f(position, 0, 1);
+                        }
+                        struct Fragments {
+                            @location(0) frag0: vec4f,
+                            @location(1) frag1: vec4f
+                        }
+                        @fragment fn main_frag() -> Fragments {
+                            var frags : Fragments;
+                            frags.frag0 = vec4f(1,0,0,1);
+                            frags.frag1 = vec4f(0,1,0,1);
+                            return frags;
+                        }
+                    `,
+                });
+                // pipeline to render the triangle onto the `render texture'
+                const pipelineTri = device.createRenderPipeline({
+                    label: "solid triangle pipeline",
+                    layout: "auto",
+                    vertex: {
+                        module:shaderModuleTri,
+                        entryPoint: "main_vert",
+                        buffers: [
+                                    {
+                                        arrayStride: 8,
+                                        attributes: [{
+                                            format: "float32x2",
+                                            offset: 0,
+                                            shaderLocation: loc_position,
+                                        }],
+ 
+                                    }
+                         ],
+                    },
+                    fragment: {
+                        module:shaderModuleTri,
+                        entryPoint: "main_frag",
+                        targets: [
+                            {
+                                format: format_render_texture,
+                            },
+                            {
+                                format: format_render_texture,
+                            },
+                        ]
+                    },
+                });
+ 
+
+
+                // initialize the vertex buffer for the quad
+                const vertsQuad = new Float32Array([
+                    -.4,-.4, 0, 0,
+                     .4,-.4, 1, 0,
+                     .4, .4, 1, 1,
+                    -.4,-.4, 0, 0,
+                     .4, .4, 1, 1,
+                    -.4, .4, 0, 1
+                ]);
+
+                const vbQuad = device.createBuffer({
+                    label:"quad vertices",
+                    size: vertsQuad.byteLength,
+                    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+                });
+                device.queue.writeBuffer(vbQuad, 0, vertsQuad);
+
+                // shader module to render the textured quad
+                const shaderModuleQuad = device.createShaderModule({
+                    label: "textured quad shader",
+                    code: `
+                        @group(${group_texture}) @binding(${binding_sampler}) var my_sampler: sampler;
+                        @group(${group_texture}) @binding(${binding_texture0}) var texture0: texture_2d<f32>;
+                        @group(${group_texture}) @binding(${binding_texture1}) var texture1: texture_2d<f32>;
+                        struct VertexInfo {
+                            @builtin(position) position: vec4f,
+                            @location(${loc_inter_stage_texCoords}) texCoords: vec2f,
+                            @location(${loc_inter_stage_instance_index}) instanceIndex : f32
+                        };
+                        @vertex fn main_vert(
+                            @location(${loc_position}) position: vec2f,
+                            @location(${loc_texCoords}) texCoords: vec2f,
+                            @builtin(instance_index) instanceIndex: u32
+                            )
+                            -> VertexInfo {
+                            var vertex: VertexInfo;
+                            vertex.position = vec4f(position, 0, 1) + vec4f(0.5*(f32(instanceIndex)*2-1), 0, 0, 0);
+                            vertex.texCoords = texCoords;
+                            vertex.instanceIndex = f32(instanceIndex);
+                            return vertex;
+                        }
+                        @fragment fn main_frag(
+                            @location(${loc_inter_stage_texCoords}) texCoords: vec2f,
+                            @location(${loc_inter_stage_instance_index}) instanceIndex: f32
+                            ) -> @location(0) vec4f {
+
+                            var texel0 = textureSample(texture0, my_sampler, texCoords);
+                            var texel1 = textureSample(texture1, my_sampler, texCoords);
+                            return (1-instanceIndex)*texel0 + instanceIndex*texel1;
+                        }
+                    `,
+ 
+                });
+
+                // pipeline to render the textured quad
+                const pipelineQuad = device.createRenderPipeline({
+                    label: "textured quad pipeline",
+                    layout: "auto",
+                    vertex: {
+                        module:shaderModuleQuad,
+                        entryPoint: "main_vert",
+                        buffers: [
+                                    {
+                                        arrayStride: 4*(2+2),
+                                        attributes: [
+                                            {
+                                                format: "float32x2",
+                                                offset: 0,
+                                                shaderLocation: loc_position,
+                                            },
+                                            {
+                                                format: "float32x2",
+                                                offset: 4*2,
+                                                shaderLocation: loc_texCoords,
+                                            }
+                                        ],
+                                    }
+                         ],
+                    },
+                    fragment: {
+                        module:shaderModuleQuad,
+                        entryPoint: "main_frag",
+                        targets: [{
+                            format: preferredFormat
+                        }]
+                    },
+                });
+                const sampler = device.createSampler({magFilter:"linear", minFilter:"linear"});
+
+                const bindGroupQuad = device.createBindGroup({
+                    layout: pipelineQuad.getBindGroupLayout(group_texture),
+                    entries:[
+                        { binding: binding_sampler, resource: sampler },
+                        { binding: binding_texture0, resource: textures[0].createView() },
+                        { binding: binding_texture1, resource: textures[1].createView() },
+                    ],
+                });
+ 
+                const encoder = device.createCommandEncoder();
+
+                // 1st pass: render the triangle onto the `render texture'
+                const passRenderTri = encoder.beginRenderPass({
+                    label:"triangle render pass",
+                    colorAttachments: [
+                        {
+                            view: textures[0].createView(),
+                            loadOp: "clear",
+                            clearValue: {r:0, g:.5, b:.5, a:1},
+                            storeOp: "store",
+                        },
+                        {
+                            view: textures[1].createView(),
+                            loadOp: "clear",
+                            clearValue: {r:.5, g:0, b:.5, a:1},
+                            storeOp: "store",
+                        },
+                    ]
+                });
+                passRenderTri.setPipeline(pipelineTri);
+                passRenderTri.setVertexBuffer(0, vbTri);
+                passRenderTri.draw(3);
+                passRenderTri.end();
+    
+                // 2nd pass: render a textured quad using the `render texture'
+                const passRenderQuad = encoder.beginRenderPass({
+                    colorAttachments: [{
+                        view: context.getCurrentTexture().createView(),
+                        loadOp: "clear",
+                        clearValue: {r:0, g:0, b:0.4, a:1},
+                        storeOp: "store",
+                    }]
+                });
+                passRenderQuad.setPipeline(pipelineQuad);
+                passRenderQuad.setVertexBuffer(0, vbQuad);
+                passRenderQuad.setBindGroup(group_texture, bindGroupQuad);
+                passRenderQuad.draw(6,2);
+                passRenderQuad.end();
+    
+                const commandBuffer = encoder.finish();
+                device.queue.submit([commandBuffer]);
+
+
+            }
+
+            main();
+        </script>
+
+        <div align="center">
+            <canvas id="webgpu" width=512, height=512>
+            </canvas>
+        </div>
+    </body>
+</html>
