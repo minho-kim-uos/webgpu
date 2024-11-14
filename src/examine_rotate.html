@@ -123,20 +123,11 @@
                 });
 
             
-                let lastX;
-                let lastY;
                 let angle = [0, 0];
                 let dragging = false;
 
                 canvas.onmousedown = function(ev) {
-                    let x = ev.clientX,
-                        y = ev.clientY;
-                    let bb = ev.target.getBoundingClientRect();
-                    if (bb.left <= x && x < bb.right && bb.top <= y && y < bb.bottom) {
-                        lastX = x;
-                        lastY = y;
-                        dragging = true;
-                    }
+                    dragging = true;
                 }
                 canvas.onmouseup = function(ev) {
                     dragging = false;
@@ -152,10 +143,8 @@
 
 
                 canvas.onmousemove = function(ev) {
-                    let x = ev.clientX;
-                    let y = ev.clientY;
                     if (dragging) {
-                        let offset = [x - lastX, y - lastY];
+                        let offset = [ev.movementX, ev.movementY];
                         if (offset[0] != 0 || offset[1] != 0) // For some reason, the offset becomes zero sometimes...
                         {
                             VP = mat4.clone(P);
@@ -165,8 +154,6 @@
                             V = mat4.rotate(V, [axis[0], axis[1], axis[2]], utils.degToRad(length2(offset))); 
                         }
                     }
-                    lastX = x;
-                    lastY = y;
                 }
 
                 const src_shaders = `
