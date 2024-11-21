@@ -1,0 +1,532 @@
+<html>
+    <head>
+        <title>Picking (Optimized)</title>
+    </head>
+    <body>
+        <h1 align=center>Picking (Optimized)</h1>
+        <div align="center">
+            <canvas id="webgpu" width=512, height=512>
+            </canvas>
+        </div>
+        <div id="message" style="text-align:center"></div>
+
+        <script type="importmap">
+        {
+            "imports": {
+                "three": "https://threejs.org/build/three.module.min.js",
+                "three/addons/": "https://threejs.org/examples/jsm/",
+                "wgpu-matrix": "https://wgpu-matrix.org/dist/2.x/wgpu-matrix.module.min.js"
+            }
+
+
+        }</script>
+        <script type="module">
+            import*as THREE from 'three'
+            import {OBJLoader} from 'three/addons/loaders/OBJLoader.js';
+            import {vec3, vec4, mat4, utils} from 'wgpu-matrix';
+
+            const loc_position = 3;
+            const loc_normal = 2;
+            const loc_inter_stage_normal = 1;
+
+            const id_group = 0;
+            const binding_matrices = 7;
+
+            const format_texture_depth = 'depth24plus';
+            const format_texture_id = "r8unorm";
+
+            // https://github.com/g-truc/glm/blob/master/glm/ext/matrix_projection.inl
+            function project(p_obj, MVP, viewport)
+            {
+                let tmp = vec4.transformMat4(p_obj, MVP);
+                tmp = tmp.map((x) => x/tmp[3]); // tmp /= tmp[3]
+                for(let i=0 ; i<2 ; i++) {
+                    tmp[i] = (0.5*tmp[i] + 0.5) * viewport[i+2] + viewport[i];
+                }
+                return tmp;
+            }
+            
+            // https://github.com/g-truc/glm/blob/master/glm/ext/matrix_projection.inl
+            function unproject(p_win, MVP, viewport) {
+                let MVP_inv = mat4.invert(MVP);
+                let tmp = mat4.clone(p_win);
+            
+                for (let i = 0; i < 2; i++)
+                    tmp[i] = 2.0 * (tmp[i] - viewport[i]) / viewport[i+2] - 1.0;
+            
+                let p_obj = vec4.transformMat4(tmp, MVP_inv);
+            
+                p_obj = p_obj.map((x) => x/p_obj[3]);
+            
+                return p_obj;
+            }
+
+            function unproject_vector(vec_win, MVP, viewport)
+            {
+                let org_win = project([0,0,0,1], MVP, viewport);
+                let vec = unproject([org_win[0]+vec_win[0], org_win[1]+vec_win[1], org_win[2]+vec_win[2], 1],
+                                    MVP, viewport);
+                return vec;
+            }
+
+
+            async function load_obj(device, url, name, pipelineNorm, pipelineId, id) {
+
+                const loader = new OBJLoader();
+
+                const root = await new Promise((resolve,reject) => {
+                    loader.load(url,
+                        (model) => {resolve(model);},
+                        null,
+                        (error) => {reject(error);});
+                });
+
+                const obj = root.children[0];
+
+                const positions = obj.geometry.attributes.position.array;
+                const normals = obj.geometry.attributes.normal.array;
+
+                const buffers = {};
+
+                buffers.position = device.createBuffer({
+                    label:`${name} positions`,
+                    size: positions.byteLength,
+                    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+                });
+
+                device.queue.writeBuffer(buffers.position, 0, positions);
+
+                buffers.normal = device.createBuffer({
+                    label:`${name} normals`,
+                    size: normals.byteLength,
+                    usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+                });
+
+                device.queue.writeBuffer(buffers.normal, 0, normals);
+
+                buffers.uniformNorm = device.createBuffer({
+                    label: `${name} uniform buffer for normal rendering`,
+                    size: 4*4*4,
+                    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+                });
+                buffers.uniformId = device.createBuffer({
+                    label: `${name} uniform buffer for id rendering`,
+                    size: 4*(4*4 + 4),
+                    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+                });
+
+
+                const object = {count: obj.geometry.attributes.position.count};
+
+                object.buffers = buffers;
+
+                object.bindGroupNorm = device.createBindGroup({
+                    layout: pipelineNorm.getBindGroupLayout(id_group),
+                    entries:[
+                        { binding: binding_matrices, resource: {buffer: buffers.uniformNorm} },
+                    ],
+                });
+
+                object.bindGroupId = device.createBindGroup({
+                    layout: pipelineId.getBindGroupLayout(id_group),
+                    entries:[
+                        { binding: binding_matrices, resource: {buffer: buffers.uniformId} },
+                    ],
+                });
+
+                object.id = id;
+
+                return object;
+            }
+
+            function render_object_normal(device, renderPass, obj, VP) {
+
+                let MVP = mat4.multiply(VP, obj.M);
+                device.queue.writeBuffer(obj.buffers.uniformNorm, 0, MVP);
+
+                renderPass.setVertexBuffer(0, obj.buffers.position);
+                renderPass.setVertexBuffer(1, obj.buffers.normal);
+                renderPass.setBindGroup(id_group, obj.bindGroupNorm);
+                renderPass.draw(obj.count);
+
+            }
+
+            function render_object_id(device, renderPass, obj, VP) {
+
+                let MVP = mat4.multiply(VP, obj.M);
+                device.queue.writeBuffer(obj.buffers.uniformId, 0, MVP);
+                let id = new Float32Array([obj.id/255.0]);
+                device.queue.writeBuffer(obj.buffers.uniformId, 4*4*4, id);
+
+                renderPass.setVertexBuffer(0, obj.buffers.position);
+                renderPass.setVertexBuffer(1, obj.buffers.normal);
+                renderPass.setBindGroup(id_group, obj.bindGroupId);
+                renderPass.draw(obj.count);
+
+            }
+
+
+            async function main() {
+                const adapter = await navigator.gpu?.requestAdapter();
+                const device = await adapter?.requestDevice();
+                if(!device) {
+                    throw Error("WebGPU not supported.");
+                }
+                const canvas = document.querySelector("#webgpu");
+                const context = canvas.getContext("webgpu");
+                const preferredFormat = navigator.gpu.getPreferredCanvasFormat();
+                context.configure({
+                    device,
+                    format: preferredFormat,
+                });
+
+                const shaderModuleNorm = device.createShaderModule({
+                    label: "normal render shader",
+                    code:` 
+                    struct VertexOut {
+                        @builtin(position) position: vec4f,
+                        @location(${loc_inter_stage_normal}) normal: vec3f
+                    };
+
+                    struct Matrices {
+                        MVP: mat4x4f,
+                    };
+
+                    @group(${id_group}) @binding(${binding_matrices}) var<uniform> matrices:Matrices;
+
+                    @vertex fn main_vert(
+                        @location(${loc_position}) position: vec3f,
+                        @location(${loc_normal}) normal: vec3f)
+                        -> VertexOut {
+                        var vertex: VertexOut;
+                        vertex.position = matrices.MVP * vec4f(position, 1);
+                        vertex.normal = normal;
+                        return vertex;
+                    }
+                    @fragment fn main_frag(@location(${loc_inter_stage_normal}) normal: vec3f)
+                        -> @location(0) vec4f {
+                        return vec4f(0.5*(normal + vec3f(1)), 1);
+                    }
+                `,
+ 
+                });
+
+                const pipelineNorm = device.createRenderPipeline({
+                    label: "normal render pipeline",
+                    layout: "auto",
+                    vertex: {
+                        module:shaderModuleNorm,
+                        entryPoint: "main_vert",
+                        buffers: [
+                                    {
+                                        arrayStride: 4*3,
+                                        attributes: [{
+                                            format: "float32x3",
+                                            offset: 0,
+                                            shaderLocation: loc_position,
+                                        }],
+                                    },
+                                    {
+                                        arrayStride: 4*3,
+                                        attributes: [{
+                                            format: "float32x3",
+                                            offset: 0,
+                                            shaderLocation: loc_normal,
+                                        }],
+                                    }
+
+                         ],
+                    },
+                    fragment: {
+                        module:shaderModuleNorm,
+                        entryPoint: "main_frag",
+                        targets: [{
+                            format: preferredFormat
+                        }]
+                    },
+                    primitive:{
+                        topology: 'triangle-list',
+                        cullMode: 'front',
+                        frontFace: "cw",    // Blender default winding order???!!!
+                    },
+                    depthStencil: {
+                        depthWriteEnabled: true,
+                        depthCompare: 'less',
+                        format: format_texture_depth,
+                    },
+                });
+
+                const shaderModuleId = device.createShaderModule({
+                    label: "id render shader",
+                    code:` 
+                    struct VertexOut {
+                        @builtin(position) position: vec4f,
+                    };
+
+                    struct Uniform {
+                        MVP: mat4x4f,
+                        id: f32,
+                    };
+
+                    @group(${id_group}) @binding(${binding_matrices}) var<uniform> uniformBuffer:Uniform;
+
+                    @vertex fn main_vert(
+                        @location(${loc_position}) position: vec3f)
+                        -> VertexOut {
+                        var vertex: VertexOut;
+                        vertex.position = uniformBuffer.MVP * vec4f(position, 1);
+                        return vertex;
+                    }
+                    @fragment fn main_frag()
+                        -> @location(0) vec4f {
+                        return vec4f(vec3(uniformBuffer.id), 1);
+                    }
+                `,
+ 
+                });
+
+                const pipelineId = device.createRenderPipeline({
+                    label: "id render pipeline",
+                    layout: "auto",
+                    vertex: {
+                        module:shaderModuleId,
+                        entryPoint: "main_vert",
+                        buffers: [
+                                    {
+                                        arrayStride: 4*3,
+                                        attributes: [{
+                                            format: "float32x3",
+                                            offset: 0,
+                                            shaderLocation: loc_position,
+                                        }],
+                                    },
+
+                         ],
+                    },
+                    fragment: {
+                        module:shaderModuleId,
+                        entryPoint: "main_frag",
+                        targets: [{
+                            format: format_texture_id,
+                        }]
+                    },
+                    primitive:{
+                        topology: 'triangle-list',
+                        cullMode: 'front',
+                        frontFace: "cw",    // Blender default winding order???!!!
+                    },
+                    depthStencil: {
+                        depthWriteEnabled: true,
+                        depthCompare: 'less',
+                        format: format_texture_depth,
+                    },
+                });
+
+
+                const monkey = await load_obj(device, "../resource/3dmodels/monkey.obj", "monkey", pipelineNorm, pipelineId, 1);
+                monkey.M = mat4.translation([2,0,0]);
+                const sphere = await load_obj(device, "../resource/3dmodels/sphere.obj", "sphere", pipelineNorm, pipelineId, 2);
+                sphere.M = mat4.translation([-2,0,0]);
+                const cube = await load_obj(device, "../resource/3dmodels/cube.obj", "cube", pipelineNorm, pipelineId, 3);
+                cube.M = mat4.translation([0,-2,0]);
+
+
+                let canvasTexture = context.getCurrentTexture();
+
+                const depthTexture = device.createTexture({
+                    size: [canvasTexture.width, canvasTexture.height],
+                    format: format_texture_depth,
+                    usage: GPUTextureUsage.RENDER_ATTACHMENT,
+                });
+
+                const depthTextureId = device.createTexture({
+                    size: [1, 1],
+                    format: format_texture_depth,
+                    usage: GPUTextureUsage.RENDER_ATTACHMENT,
+                });
+
+
+                let angle = [0, 0];
+                let dragging = false;
+
+                const bufferPicking = device.createBuffer({
+                    label:"buffer to read the pixel at the mouse location",
+                    size: 4,
+                    usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+                });
+
+                const idRenderTexture = device.createTexture({
+//                    size:[canvasTexture.width, canvasTexture.height],
+                    size:[1,1],
+                    format: format_texture_id,
+                    usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+                });
+
+                //////////////////////////////////////////////////////////////////////
+                async function read_pixel(x,y) {
+
+                    const encoder = device.createCommandEncoder();
+                    const renderPass = encoder.beginRenderPass({
+                        label:"rener pass to render id",
+                        colorAttachments: [{
+                            view: idRenderTexture.createView(),
+                            loadOp: "clear",
+                            clearValue: {r:0, g:0, b:0, a:1},
+                            storeOp: "store",
+                        }],
+                        depthStencilAttachment: {
+                            view: depthTextureId.createView(),
+                            depthClearValue: 1.0,
+                            depthLoadOp: 'clear',
+                            depthStoreOp: 'store',
+                        },
+                    });
+                    let width_near = frustum.right - frustum.left;
+                    let height_near = frustum.top - frustum.bottom;
+                    let frustum_pick = {
+                        left:frustum.left + width_near * x / canvasTexture.width,
+                        right:frustum.left + width_near * (x+1) / canvasTexture.width,
+                        top: frustum.top - height_near * y / canvasTexture.height,
+                        bottom: frustum.top - height_near * (y+1) / canvasTexture.height,
+                        near: frustum.near,
+                        far: frustum.far,
+                    };
+                    let P_pick = mat4.frustum(
+                        frustum_pick.left,
+                        frustum_pick.right,
+                        frustum_pick.bottom,
+                        frustum_pick.top,
+                        frustum_pick.near,
+                        frustum_pick.far);
+                    let VP_pick = mat4.multiply(P_pick, V);
+
+                    renderPass.setPipeline(pipelineId);
+                    render_object_id(device, renderPass, monkey, VP_pick);
+                    render_object_id(device, renderPass, sphere, VP_pick);
+                    render_object_id(device, renderPass, cube, VP_pick);
+                    renderPass.end();
+
+                    encoder.copyTextureToBuffer(
+                        { 
+                            texture: idRenderTexture,
+                            origin: [0, 0]
+//                            origin: [x, y]
+                        },
+                        { 
+                            buffer: bufferPicking
+                        },
+                        [1, 1]
+                    );
+
+                    const commandBuffer = encoder.finish();
+                    device.queue.submit([commandBuffer]);
+
+                    await bufferPicking.mapAsync(GPUMapMode.READ);
+
+                    // 2024/11/14 The following line doesn't work without slide()...
+                    const pixel = new Uint8Array(bufferPicking.getMappedRange().slice());
+                    bufferPicking.unmap();
+
+                    return pixel[0];
+
+                }
+
+                const object_names = ["nothing", "monkey", "sphere", "cube"];
+
+                canvas.onmousedown = async function(ev) {
+                    let x = ev.offsetX,
+                        y = ev.offsetY;
+
+
+                    const id = await read_pixel(x,y);
+                    if(id < object_names.length) {
+                        document.querySelector("#message").innerHTML = `${object_names[id]} is selected.`;
+                    } 
+
+                    dragging = true;
+                }
+                canvas.onmouseup = function(ev) {
+                    dragging = false;
+                };
+
+                let fovy = utils.degToRad(60);
+                let aspect = 1;
+                let frustum = {near:0.1, far:20};
+                frustum.top = Math.tan(fovy/2.0)*frustum.near;
+                frustum.bottom = -frustum.top;
+                frustum.right = frustum.top*aspect;
+                frustum.left = -frustum.right;
+
+                
+//                let P = mat4.perspective(utils.degToRad(60), 1, 0.1, 20); 
+                let P = mat4.frustum(frustum.left, frustum.right, frustum.bottom, frustum.top, frustum.near, frustum.far);
+                let V = mat4.translation([0,0,-8]);
+                let VP = mat4.multiply(P,V);
+
+
+                const length2 = (p) => Math.sqrt(p[0]*p[0] + p[1]*p[1]);
+
+
+                canvas.onmousemove = function(ev) {
+                    let x = ev.clientX;
+                    let y = ev.clientY;
+                    if (dragging) {
+                        let offset = [ev.movementX, ev.movementY];
+                        if (offset[0] != 0 || offset[1] != 0) // For some reason, the offset becomes zero sometimes...
+                        {
+                            VP = mat4.clone(P);
+                            VP = mat4.multiply(VP, V);
+                            let axis = unproject_vector([offset[1], offset[0], 0], VP,
+                                [0, 0, canvas.clientWidth, canvas.clientHeight]);
+                            V = mat4.rotate(V, [axis[0], axis[1], axis[2]], utils.degToRad(length2(offset))); 
+                        }
+                        VP = mat4.multiply(P,V);
+                    }
+                }
+
+
+                function render(time) {
+
+                    canvasTexture = context.getCurrentTexture();
+                        
+                    const encoder = device.createCommandEncoder();
+
+                    const renderPass = encoder.beginRenderPass({
+                        colorAttachments: [{
+                            view: canvasTexture.createView(),
+                            loadOp: "clear",
+                            clearValue: {r:.3, g:.3, b:.3, a:1},
+                            storeOp: "store",
+                        }],
+                        depthStencilAttachment: {
+                            view: depthTexture.createView(),
+                            depthClearValue: 1.0,
+                            depthLoadOp: 'clear',
+                            depthStoreOp: 'store',
+                        },
+                    });
+
+
+                    renderPass.setPipeline(pipelineNorm);
+                    render_object_normal(device, renderPass, monkey, VP);
+                    render_object_normal(device, renderPass, sphere, VP);
+                    render_object_normal(device, renderPass, cube, VP);
+                    renderPass.end();
+
+                    const commandBuffer = encoder.finish();
+                    device.queue.submit([commandBuffer]);
+
+                    requestAnimationFrame(render);
+                }
+
+                requestAnimationFrame(render);
+
+            }
+
+
+
+            main();
+        </script>
+
+    </body>
+</html>
