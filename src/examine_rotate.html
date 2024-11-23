@@ -223,8 +223,6 @@
                     },
                     primitive:{
                         topology: 'triangle-list',
-                        cullMode: 'front',
-                        frontFace: "cw",    // Blender default winding order???!!!
                     },
                     depthStencil: {
                         depthWriteEnabled: true,
@@ -259,7 +257,7 @@
                         
                     device.queue.writeBuffer(uniformBuffer, 0, MVP);
                     const encoder = device.createCommandEncoder();
-                    const passRender = encoder.beginRenderPass({
+                    const renderPass = encoder.beginRenderPass({
                         colorAttachments: [{
                             view: canvasTexture.createView(),
                             loadOp: "clear",
@@ -273,13 +271,13 @@
                             depthStoreOp: 'store',
                         },
                     });
-                    passRender.setPipeline(pipeline);
-                    passRender.setVertexBuffer(0, vbPosition);
-                    passRender.setVertexBuffer(1, vbNormal);
-                    passRender.setIndexBuffer(indexBuffer, 'uint16');
-                    passRender.setBindGroup(id_group, bindGroup);
-                    passRender.drawIndexed(monkey.geometry.index.count);
-                    passRender.end();
+                    renderPass.setPipeline(pipeline);
+                    renderPass.setVertexBuffer(0, vbPosition);
+                    renderPass.setVertexBuffer(1, vbNormal);
+                    renderPass.setIndexBuffer(indexBuffer, 'uint16');
+                    renderPass.setBindGroup(id_group, bindGroup);
+                    renderPass.drawIndexed(monkey.geometry.index.count);
+                    renderPass.end();
                     const commandBuffer = encoder.finish();
                     device.queue.submit([commandBuffer]);
 
