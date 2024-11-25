@@ -1,9 +1,9 @@
 <html>
     <head>
-        <title>Examine the Scene (Rotation Only)</title>
+        <title>Examine the Scene (IN PROGRESS)</title>
     </head>
     <body>
-        <h1 align=center>Examine the Scene (Rotation Only)</h1>
+        <h1 align=center>Examine the Scene (IN PROGRESS)</h1>
         <script type="importmap">
         {
             "imports": {
@@ -43,34 +43,56 @@
                     device,
                     format: preferredFormat,
                 });
+                let canvasTexture = context.getCurrentTexture();
 
                 class UI {
-                    static dragging = false;
+                    static NONE = 0;
+                    static ROTATING = 1;
+                    static TRANSLATING = 2;
+                    static mouseMove = UI.NONE;
+                    static camera = {fovy:60, position:vec3.create(0,0,-3), near:0.1, far:100};
+                    static matrices = {
+                        P: mat4.perspective(utils.degToRad(UI.camera.fovy), canvasTexture.width/canvasTexture.height, UI.camera.near, UI.camera.far),
+                        R: mat4.identity(),
+                    };
                     static onmousedown(ev) {
-                        UI.dragging = true;
+                        if(ev.buttons & 1)  { UI.mouseMove = UI.ROTATING; }
+                        else if(ev.buttons & 4) { UI.mouseMove = UI.TRANSLATING ; }
                     };
                     static onmouseup(ev) {
-                        UI.dragging = false;
+                        UI.mouseMove = UI.NONE;
                     };
                     static onmousemove(ev) {
-                        if (UI.dragging) {
-                            let offset = [ev.movementX, ev.movementY];
-                            VP = mat4.clone(P);
-                            VP = mat4.multiply(VP, V);
-                            let axis = unproject_vector([offset[1], offset[0], 0], VP,
+                        let offset = [ev.movementX, ev.movementY];
+                        if (UI.mouseMove == UI.ROTATING) {
+                            UI.matrices.VP = mat4.multiply(mat4.translate(UI.matrices.P, UI.camera.position),UI.matrices.R);
+                            let axis = unproject_vector([offset[1], offset[0], 0], UI.matrices.VP,
                                 [0, 0, canvas.clientWidth, canvas.clientHeight]);
-                            V = mat4.rotate(V, [axis[0], axis[1], axis[2]], utils.degToRad(vec2.lenSq(offset))); 
+                            UI.matrices.R = mat4.rotate(UI.matrices.R, [axis[0], axis[1], axis[2]], utils.degToRad(vec2.lenSq(offset))); 
+                        }
+                        else if(UI.mouseMove == UI.TRANSLATING) {
+                            UI.matrices.VP = mat4.multiply(mat4.translate(UI.matrices.P, UI.camera.position),UI.matrices.R);
+                            let by = unproject_vector([offset[0], -offset[1], 0], UI.matrices.VP,
+                                [0, 0, canvas.clientWidth, canvas.clientHeight]);
+                            UI.camera.position = vec3.add(UI.camera.position, vec3.create(by[0], by[1], by[2]));
                         }
                     };
+                    static onwheel(ev) {
+                        ev.preventDefault();
+                        UI.camera.position[2] = -Math.max(1, Math.min(-UI.camera.position[2] + ev.deltaY*0.01, 50));
+                        UI.matrices.VP = mat4.multiply(mat4.translate(UI.matrices.P, UI.camera.position), UI.matrices.R);
+                    };
                 };
+
+                UI.matrices.VP = mat4.multiply(mat4.translate(UI.matrices.P, UI.camera.position),UI.matrices.R);
 
                 canvas.onmousedown = UI.onmousedown;
                 canvas.onmouseup = UI.onmouseup;
                 canvas.onmousemove = UI.onmousemove;
+                window.addEventListener("wheel", UI.onwheel, {passive:false});
             
                 const monkey = await init_monkey(device, preferredFormat);
 
-                let canvasTexture = context.getCurrentTexture();
 
                 const depthTexture = device.createTexture({
                     size: [canvasTexture.width, canvasTexture.height],
@@ -78,16 +100,14 @@
                     usage: GPUTextureUsage.RENDER_ATTACHMENT,
                 });
  
-                let P = mat4.perspective(utils.degToRad(60), 1, 0.1, 6); 
-                let V = mat4.translation([0,0,-3]);
-                let VP = mat4.multiply(P,V);
+
                 let M = mat4.identity();
 
                 let MVP;
 
                 function render(time) {
                     
-                    MVP = mat4.multiply(mat4.multiply(P,V), M);
+                    MVP = mat4.multiply(UI.matrices.VP, M);
 
                     canvasTexture = context.getCurrentTexture();
                         
@@ -296,7 +316,7 @@
         </script>
 
         <div align="center">
-            <canvas id="webgpu" width=512, height=512>
+            <canvas id="webgpu" width=640, height=480>
             </canvas>
         </div>
     </body>
