@@ -1,9 +1,9 @@
 <html>
     <head>
-        <title>Examine the Scene (IN PROGRESS)</title>
+        <title>Examine the Scene</title>
     </head>
     <body>
-        <h1 align=center>Examine the Scene (IN PROGRESS)</h1>
+        <h1 align=center>Examine the Scene</h1>
         <script type="importmap">
         {
             "imports": {
@@ -65,26 +65,30 @@
                     static onmousemove(ev) {
                         let offset = [ev.movementX, ev.movementY];
                         if (UI.mouseMove == UI.ROTATING) {
-                            UI.matrices.VP = mat4.multiply(mat4.translate(UI.matrices.P, UI.camera.position),UI.matrices.R);
+                            UI.update_VP();
                             let axis = unproject_vector([offset[1], offset[0], 0], UI.matrices.VP,
                                 [0, 0, canvas.clientWidth, canvas.clientHeight]);
                             UI.matrices.R = mat4.rotate(UI.matrices.R, [axis[0], axis[1], axis[2]], utils.degToRad(vec2.lenSq(offset))); 
                         }
                         else if(UI.mouseMove == UI.TRANSLATING) {
-                            UI.matrices.VP = mat4.multiply(mat4.translate(UI.matrices.P, UI.camera.position),UI.matrices.R);
+                            UI.update_VP();
                             let by = unproject_vector([offset[0], -offset[1], 0], UI.matrices.VP,
                                 [0, 0, canvas.clientWidth, canvas.clientHeight]);
-                            UI.camera.position = vec3.add(UI.camera.position, vec3.create(by[0], by[1], by[2]));
+                            UI.camera.position = vec3.add(UI.camera.position, vec3.transformMat4(vec3.create(by[0], by[1], by[2]), UI.matrices.R));
                         }
                     };
                     static onwheel(ev) {
                         ev.preventDefault();
                         UI.camera.position[2] = -Math.max(1, Math.min(-UI.camera.position[2] + ev.deltaY*0.01, 50));
-                        UI.matrices.VP = mat4.multiply(mat4.translate(UI.matrices.P, UI.camera.position), UI.matrices.R);
+                        UI.update_VP();
                     };
+                    static update_VP() {
+                        UI.matrices.VP = mat4.multiply(mat4.translate(UI.matrices.P, UI.camera.position),UI.matrices.R);
+                    }
                 };
 
-                UI.matrices.VP = mat4.multiply(mat4.translate(UI.matrices.P, UI.camera.position),UI.matrices.R);
+                UI.update_VP();
+
 
                 canvas.onmousedown = UI.onmousedown;
                 canvas.onmouseup = UI.onmouseup;
@@ -315,9 +319,21 @@
             main();
         </script>
 
-        <div align="center">
-            <canvas id="webgpu" width=640, height=480>
-            </canvas>
-        </div>
+        <table align=center>
+            <tr><td>
+                <div align="center">
+                    <canvas id="webgpu" width=640, height=480>
+                    </canvas>
+                </div>
+            </td></tr>
+            <tr><td>
+                <ul>
+                    <li>rotation: dragging with left mouse button</li>
+                    <li>moving forward/backward: mouse wheel</li>
+                    <li>translation (left/right/up/down): dragging with middle mouse button</li>
+                </ul>
+            </td></tr>
+        </table>
+
     </body>
 </html>
