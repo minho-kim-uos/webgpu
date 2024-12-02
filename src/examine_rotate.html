@@ -59,7 +59,7 @@
                             VP = mat4.multiply(VP, V);
                             let axis = unproject_vector([offset[1], offset[0], 0], VP,
                                 [0, 0, canvas.clientWidth, canvas.clientHeight]);
-                            V = mat4.rotate(V, [axis[0], axis[1], axis[2]], utils.degToRad(vec2.lenSq(offset))); 
+                            V = mat4.rotate(V, [axis[0], axis[1], axis[2]], utils.degToRad(vec2.lenSq(offset)*0.1)); 
                         }
                     };
                 };
@@ -68,7 +68,7 @@
                 canvas.onmouseup = UI.onmouseup;
                 canvas.onmousemove = UI.onmousemove;
             
-                const monkey = await init_monkey(device, preferredFormat);
+                const monkey = await load_gltf("../resource/3dmodels/monkey.glb",device, preferredFormat);
 
                 let canvasTexture = context.getCurrentTexture();
 
@@ -87,7 +87,6 @@
 
                 function render(time) {
                     
-                    MVP = mat4.multiply(mat4.multiply(P,V), M);
 
                     canvasTexture = context.getCurrentTexture();
                         
@@ -106,13 +105,8 @@
                             depthStoreOp: 'store',
                         },
                     });
-                    renderPass.setPipeline(monkey.pipeline);
-                    device.queue.writeBuffer(monkey.uniformBuffer, 0, MVP);
-                    renderPass.setVertexBuffer(0, monkey.vertexBuffer.position);
-                    renderPass.setVertexBuffer(1, monkey.vertexBuffer.normal);
-                    renderPass.setIndexBuffer(monkey.indexBuffer, 'uint16');
-                    renderPass.setBindGroup(id_group, monkey.bindGroup);
-                    renderPass.drawIndexed(monkey.count);
+                    MVP = mat4.multiply(mat4.multiply(P,V), M);
+                    monkey.render(renderPass, MVP);
                     renderPass.end();
                     const commandBuffer = encoder.finish();
                     device.queue.submit([commandBuffer]);
@@ -124,26 +118,26 @@
 
             }
 
-            async function init_monkey(device, preferredFormat) {
+            async function load_gltf(url, device, preferredFormat) {
                 const loader = new GLTFLoader();
 
                 const root = await new Promise((resolve,reject) => {
-                    loader.load("../resource/3dmodels/monkey.glb",
+                    loader.load(url,
                         (model) => {resolve(model);},
                         null,
                         (error) => {reject(error);});
                 });
 
-                const monkey = root.scene.children[0];
+                const obj = root.scene.children[0];
 
-                const positions = monkey.geometry.attributes.position.array;
-                const normals = monkey.geometry.attributes.normal.array;
-                const indices = monkey.geometry.index.array;
+                const positions = obj.geometry.attributes.position.array;
+                const normals = obj.geometry.attributes.normal.array;
+                const indices = new Uint32Array(obj.geometry.index.array);
 
                 const vertexBuffer = {};
 
                 vertexBuffer.position = device.createBuffer({
-                    label:"monkey positions",
+                    label:"obj mesh positions",
                     size: positions.byteLength,
                     usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
                 });
@@ -151,7 +145,7 @@
                 device.queue.writeBuffer(vertexBuffer.position, 0, positions);
 
                 vertexBuffer.normal = device.createBuffer({
-                    label:"monkey normals",
+                    label:"obj mesh normals",
                     size: normals.byteLength,
                     usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
                 });
@@ -159,7 +153,7 @@
                 device.queue.writeBuffer(vertexBuffer.normal, 0, normals);
 
                 const indexBuffer = device.createBuffer({
-                    label:"monkey indices",
+                    label:"obj mesh indices",
                     size: indices.byteLength,
                     usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
                 });
@@ -252,7 +246,17 @@
                     ],
                 });
 
-                return {vertexBuffer, indexBuffer, uniformBuffer, pipeline, bindGroup, count:indices.length};
+                function render(renderPass, MVP) {
+                    renderPass.setPipeline(pipeline);
+                    device.queue.writeBuffer(uniformBuffer, 0, MVP);
+                    renderPass.setVertexBuffer(0, vertexBuffer.position);
+                    renderPass.setVertexBuffer(1, vertexBuffer.normal);
+                    renderPass.setIndexBuffer(indexBuffer, 'uint32');
+                    renderPass.setBindGroup(id_group, bindGroup);
+                    renderPass.drawIndexed(obj.geometry.index.count);
+                }
+
+                return {render};
             }
 
             // https://github.com/g-truc/glm/blob/master/glm/ext/matrix_projection.inl

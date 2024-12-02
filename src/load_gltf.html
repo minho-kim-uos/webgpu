@@ -21,37 +21,24 @@
 
             const format_depth_texture = 'depth24plus';
 
-            async function main() {
-                const adapter = await navigator.gpu?.requestAdapter();
-                const device = await adapter?.requestDevice();
-                if(!device) {
-                    throw Error("WebGPU not supported.");
-                }
-                const canvas = document.querySelector("#webgpu");
-                const context = canvas.getContext("webgpu");
-                const preferredFormat = navigator.gpu.getPreferredCanvasFormat();
-                context.configure({
-                    device,
-                    format: preferredFormat,
-                });
-
+            async function load_gltf(url, device, preferredFormat) {
                 const loader = new GLTFLoader();
 
                 const root = await new Promise((resolve,reject) => {
-                    loader.load("../resource/3dmodels/monkey.glb",
+                    loader.load(url,
                         (model) => {resolve(model);},
                         null,
                         (error) => {reject(error);});
                 });
 
-                const monkey = root.scene.children[0];
+                const obj = root.scene.children[0];
 
-                const positions = monkey.geometry.attributes.position.array;
-                const normals = monkey.geometry.attributes.normal.array;
-                const indices = monkey.geometry.index.array;
+                const positions = obj.geometry.attributes.position.array;
+                const normals = obj.geometry.attributes.normal.array;
+                const indices = new Uint32Array(obj.geometry.index.array);
 
                 const vbPosition = device.createBuffer({
-                    label:"monkey positions",
+                    label:"obj mesh positions",
                     size: positions.byteLength,
                     usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
                 });
@@ -59,7 +46,7 @@
                 device.queue.writeBuffer(vbPosition, 0, positions);
 
                 const vbNormal = device.createBuffer({
-                    label:"monkey normals",
+                    label:"obj mesh normals",
                     size: normals.byteLength,
                     usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
                 });
@@ -67,14 +54,16 @@
                 device.queue.writeBuffer(vbNormal, 0, normals);
 
                 const indexBuffer = device.createBuffer({
-                    label:"monkey indices",
+                    label:"obj mesh indices",
                     size: indices.byteLength,
                     usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
                 });
 
                 device.queue.writeBuffer(indexBuffer, 0, indices);
 
-                const src_shaders = `
+                const shaderModule = device.createShaderModule({
+                    label: "solid triangle shader",
+                    code:`
                     struct VertexOut {
                         @builtin(position) position: vec4f,
                         @location(${loc_inter_stage_normal}) normal: vec3f
@@ -92,15 +81,11 @@
                     @fragment fn main_frag(@location(${loc_inter_stage_normal}) normal: vec3f)
                         -> @location(0) vec4f {
                         return vec4f(0.5*(normal + vec3f(1)), 1);
-                    }
-                `;
-                const shaderModule = device.createShaderModule({
-                    label: "solid triangle shader",
-                    code:src_shaders,
+                    }`
                 });
 
                 const pipeline = device.createRenderPipeline({
-                    label: "solid triangle pipeline",
+                    label: "obj mesh rendering pipeline",
                     layout: "auto",
                     vertex: {
                         module:shaderModule,
@@ -142,6 +127,33 @@
                     },
                 });
 
+                function render(renderPass) {
+                    renderPass.setPipeline(pipeline);
+                    renderPass.setVertexBuffer(0, vbPosition);
+                    renderPass.setVertexBuffer(1, vbNormal);
+                    renderPass.setIndexBuffer(indexBuffer, 'uint32');
+                    renderPass.drawIndexed(obj.geometry.index.count);
+                }
+
+                return {render};
+            }
+
+            async function main() {
+                const adapter = await navigator.gpu?.requestAdapter();
+                const device = await adapter?.requestDevice();
+                if(!device) {
+                    throw Error("WebGPU not supported.");
+                }
+                const canvas = document.querySelector("#webgpu");
+                const context = canvas.getContext("webgpu");
+                const preferredFormat = navigator.gpu.getPreferredCanvasFormat();
+                context.configure({
+                    device,
+                    format: preferredFormat,
+                });
+
+                const monkey = await load_gltf("../resource/3dmodels/monkey.glb",device, preferredFormat);
+
                 const canvasTexture = context.getCurrentTexture();
 
                 const depthTexture = device.createTexture({
@@ -165,11 +177,7 @@
                         depthStoreOp: 'store',
                     },
                 });
-                renderPass.setPipeline(pipeline);
-                renderPass.setVertexBuffer(0, vbPosition);
-                renderPass.setVertexBuffer(1, vbNormal);
-                renderPass.setIndexBuffer(indexBuffer, 'uint16');
-                renderPass.drawIndexed(monkey.geometry.index.count);
+                monkey.render(renderPass);
                 renderPass.end();
                 const commandBuffer = encoder.finish();
                 device.queue.submit([commandBuffer]);

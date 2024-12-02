@@ -5,7 +5,7 @@
     <body>
         <h1 align=center>Picking</h1>
         <div align="center">
-            <canvas id="webgpu" width=512, height=512>
+            <canvas id="webgpu" width=640, height=480>
             </canvas>
         </div>
         <div id="message" style="text-align:center"></div>
@@ -70,7 +70,7 @@
             }
 
 
-            async function load_obj(device, url, name, pipelineNorm, pipelineId, id) {
+            async function load_obj(device, url, name, bindGroupLayoutNorm, bindGroupLayoutId, id) {
 
                 const loader = new OBJLoader();
 
@@ -121,14 +121,14 @@
                 object.buffers = buffers;
 
                 object.bindGroupNorm = device.createBindGroup({
-                    layout: pipelineNorm.getBindGroupLayout(id_group),
+                    layout: bindGroupLayoutNorm,
                     entries:[
                         { binding: binding_matrices, resource: {buffer: buffers.uniformNorm} },
                     ],
                 });
 
                 object.bindGroupId = device.createBindGroup({
-                    layout: pipelineId.getBindGroupLayout(id_group),
+                    layout: bindGroupLayoutId,
                     entries:[
                         { binding: binding_matrices, resource: {buffer: buffers.uniformId} },
                     ],
@@ -318,12 +318,15 @@
                     },
                 });
 
+                const bindGroupLayoutNorm = pipelineNorm.getBindGroupLayout(id_group);
+                const bindGroupLayoutId = pipelineId.getBindGroupLayout(id_group);
 
-                const monkey = await load_obj(device, "../resource/3dmodels/monkey.obj", "monkey", pipelineNorm, pipelineId, 1);
+
+                const monkey = await load_obj(device, "../resource/3dmodels/monkey.obj", "monkey", bindGroupLayoutNorm, bindGroupLayoutId, 1);
                 monkey.M = mat4.translation([2,0,0]);
-                const sphere = await load_obj(device, "../resource/3dmodels/sphere.obj", "sphere", pipelineNorm, pipelineId, 2);
+                const sphere = await load_obj(device, "../resource/3dmodels/sphere.obj", "sphere", bindGroupLayoutNorm, bindGroupLayoutId, 2);
                 sphere.M = mat4.translation([-2,0,0]);
-                const cube = await load_obj(device, "../resource/3dmodels/cube.obj", "cube", pipelineNorm, pipelineId, 3);
+                const cube = await load_obj(device, "../resource/3dmodels/cube.obj", "cube", bindGroupLayoutNorm, bindGroupLayoutId, 3);
                 cube.M = mat4.translation([0,-2,0]);
 
 
@@ -392,7 +395,7 @@
 
                     await bufferPicking.mapAsync(GPUMapMode.READ);
 
-                    // 2024/11/14 The following line doesn't work without slide()...
+                    // 2024/11/14 The following line doesn't work without slice()...
                     const pixel = new Uint8Array(bufferPicking.getMappedRange().slice());
                     bufferPicking.unmap();
 
@@ -417,7 +420,7 @@
                     dragging = false;
                 };
 
-                let P = mat4.perspective(utils.degToRad(60), 1, 0.1, 20); 
+                let P = mat4.perspective(utils.degToRad(60), canvasTexture.width/canvasTexture.height, 0.1, 20); 
                 let V = mat4.translation([0,0,-8]);
                 let VP = mat4.multiply(P,V);
 

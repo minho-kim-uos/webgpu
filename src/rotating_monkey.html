@@ -27,57 +27,24 @@
 
             const format_depth_texture = 'depth24plus';
 
-            
-            // https://github.com/g-truc/glm/blob/master/glm/ext/matrix_projection.inl
-            function unproject(p_win, MVP, viewport) {
-                let MVP_inv = mat4.create();
-                mat4.invert(MVP_inv, MVP);
-            
-                let tmp = mat4.clone([p_win[0], p_win[1], p_win[2], 1.0]);
-            
-                //	for(let i in [0,1]) --> not working!!!???
-                for (let i = 0; i < 2; i++)
-                    tmp[i] = 2.0 * (tmp[i] - viewport[i]) / viewport[i + 2] - 1.0;
-            
-                let p_obj = vec4.create();
-                vec4.transformMat4(p_obj, tmp, MVP_inv);
-            
-                for (let i in [0, 1, 2]) p_obj[i] /= p_obj[3];
-            
-                return p_obj;
-            }
-
-            async function main() {
-                const adapter = await navigator.gpu?.requestAdapter();
-                const device = await adapter?.requestDevice();
-                if(!device) {
-                    throw Error("WebGPU not supported.");
-                }
-                const canvas = document.querySelector("#webgpu");
-                const context = canvas.getContext("webgpu");
-                const preferredFormat = navigator.gpu.getPreferredCanvasFormat();
-                context.configure({
-                    device,
-                    format: preferredFormat,
-                });
-
+            async function load_gltf(url, device, preferredFormat) {
                 const loader = new GLTFLoader();
 
                 const root = await new Promise((resolve,reject) => {
-                    loader.load("../resource/3dmodels/monkey.glb",
+                    loader.load(url,
                         (model) => {resolve(model);},
                         null,
                         (error) => {reject(error);});
                 });
 
-                const monkey = root.scene.children[0];
+                const obj = root.scene.children[0];
 
-                const positions = monkey.geometry.attributes.position.array;
-                const normals = monkey.geometry.attributes.normal.array;
-                const indices = monkey.geometry.index.array;
+                const positions = obj.geometry.attributes.position.array;
+                const normals = obj.geometry.attributes.normal.array;
+                const indices = new Uint32Array(obj.geometry.index.array);
 
                 const vbPosition = device.createBuffer({
-                    label:"monkey positions",
+                    label:"obj mesh positions",
                     size: positions.byteLength,
                     usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
                 });
@@ -85,7 +52,7 @@
                 device.queue.writeBuffer(vbPosition, 0, positions);
 
                 const vbNormal = device.createBuffer({
-                    label:"monkey normals",
+                    label:"obj mesh normals",
                     size: normals.byteLength,
                     usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
                 });
@@ -93,7 +60,7 @@
                 device.queue.writeBuffer(vbNormal, 0, normals);
 
                 const indexBuffer = device.createBuffer({
-                    label:"monkey indices",
+                    label:"obj mesh indices",
                     size: indices.byteLength,
                     usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
                 });
@@ -188,6 +155,37 @@
                     ],
                 });
 
+                function render(renderPass, MVP) {
+                    device.queue.writeBuffer(uniformBuffer, 0, MVP);
+                    renderPass.setPipeline(pipeline);
+                    renderPass.setVertexBuffer(0, vbPosition);
+                    renderPass.setVertexBuffer(1, vbNormal);
+                    renderPass.setIndexBuffer(indexBuffer, 'uint32');
+                    renderPass.setBindGroup(id_group, bindGroup);
+                    renderPass.drawIndexed(obj.geometry.index.count);
+                }
+
+                return {render}
+            }
+
+            
+            async function main() {
+                const adapter = await navigator.gpu?.requestAdapter();
+                const device = await adapter?.requestDevice();
+                if(!device) {
+                    throw Error("WebGPU not supported.");
+                }
+                const canvas = document.querySelector("#webgpu");
+                const context = canvas.getContext("webgpu");
+                const preferredFormat = navigator.gpu.getPreferredCanvasFormat();
+                context.configure({
+                    device,
+                    format: preferredFormat,
+                });
+
+                const monkey = await load_gltf("../resource/3dmodels/monkey.glb",device, preferredFormat);
+
+
                 let canvasTexture = context.getCurrentTexture();
 
                 const depthTexture = device.createTexture({
@@ -202,11 +200,9 @@
 
                 function render(time) {
                     
-                    MVP = mat4.rotate(VP, [0,1,0], time*0.001);
 
                     canvasTexture = context.getCurrentTexture();
                         
-                    device.queue.writeBuffer(uniformBuffer, 0, MVP);
                     const encoder = device.createCommandEncoder();
                     const renderPass = encoder.beginRenderPass({
                         colorAttachments: [{
@@ -222,12 +218,10 @@
                             depthStoreOp: 'store',
                         },
                     });
-                    renderPass.setPipeline(pipeline);
-                    renderPass.setVertexBuffer(0, vbPosition);
-                    renderPass.setVertexBuffer(1, vbNormal);
-                    renderPass.setIndexBuffer(indexBuffer, 'uint16');
-                    renderPass.setBindGroup(id_group, bindGroup);
-                    renderPass.drawIndexed(monkey.geometry.index.count);
+
+                    MVP = mat4.rotate(VP, [0,1,0], time*0.001);
+                    monkey.render(renderPass, MVP);
+
                     renderPass.end();
                     const commandBuffer = encoder.finish();
                     device.queue.submit([commandBuffer]);

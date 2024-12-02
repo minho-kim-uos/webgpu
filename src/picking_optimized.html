@@ -70,7 +70,7 @@
             }
 
 
-            async function load_obj(device, url, name, pipelineNorm, pipelineId, id) {
+            async function load_obj(device, url, name, bindGroupLayoutNorm, bindGroupLayoutId, id) {
 
                 const loader = new OBJLoader();
 
@@ -121,14 +121,14 @@
                 object.buffers = buffers;
 
                 object.bindGroupNorm = device.createBindGroup({
-                    layout: pipelineNorm.getBindGroupLayout(id_group),
+                    layout: bindGroupLayoutNorm,
                     entries:[
                         { binding: binding_matrices, resource: {buffer: buffers.uniformNorm} },
                     ],
                 });
 
                 object.bindGroupId = device.createBindGroup({
-                    layout: pipelineId.getBindGroupLayout(id_group),
+                    layout: bindGroupLayoutId,
                     entries:[
                         { binding: binding_matrices, resource: {buffer: buffers.uniformId} },
                     ],
@@ -318,14 +318,15 @@
                     },
                 });
 
+                const bindGroupLayoutNorm = pipelineNorm.getBindGroupLayout(id_group);
+                const bindGroupLayoutId = pipelineId.getBindGroupLayout(id_group);
 
-                const monkey = await load_obj(device, "../resource/3dmodels/monkey.obj", "monkey", pipelineNorm, pipelineId, 1);
+                const monkey = await load_obj(device, "../resource/3dmodels/monkey.obj", "monkey", bindGroupLayoutNorm, bindGroupLayoutId, 1);
                 monkey.M = mat4.translation([2,0,0]);
-                const sphere = await load_obj(device, "../resource/3dmodels/sphere.obj", "sphere", pipelineNorm, pipelineId, 2);
+                const sphere = await load_obj(device, "../resource/3dmodels/sphere.obj", "sphere", bindGroupLayoutNorm, bindGroupLayoutId, 2);
                 sphere.M = mat4.translation([-2,0,0]);
-                const cube = await load_obj(device, "../resource/3dmodels/cube.obj", "cube", pipelineNorm, pipelineId, 3);
+                const cube = await load_obj(device, "../resource/3dmodels/cube.obj", "cube", bindGroupLayoutNorm, bindGroupLayoutId, 3);
                 cube.M = mat4.translation([0,-2,0]);
-
 
                 let canvasTexture = context.getCurrentTexture();
 
@@ -454,7 +455,6 @@
                 frustum.left = -frustum.right;
 
                 
-//                let P = mat4.perspective(utils.degToRad(60), 1, 0.1, 20); 
                 let P = mat4.frustum(frustum.left, frustum.right, frustum.bottom, frustum.top, frustum.near, frustum.far);
                 let V = mat4.translation([0,0,-8]);
                 let VP = mat4.multiply(P,V);
